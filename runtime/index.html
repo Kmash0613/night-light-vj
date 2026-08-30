@@ -43,16 +43,16 @@
     <div class="section">
       <p class="panel-label">Auto Extract（輝度マップの自動生成）</p>
       <div class="slider-row">
-        <span class="label-line"><span>top %（明るい上位何%をマップに含めるか）</span><span id="extract-top-percent-val">3.0</span></span>
-        <input type="range" id="extract-top-percent" min="0.5" max="15" step="0.5" value="3">
+        <span class="label-line"><span>top %（明るい上位何%をマップに含めるか）</span><span id="extract-top-percent-val">8.0</span></span>
+        <input type="range" id="extract-top-percent" min="0.5" max="50" step="0.5" value="8">
       </div>
       <div class="slider-row">
         <span class="label-line"><span>min area（ノイズ除去、px）</span><span id="extract-min-area-val">4</span></span>
         <input type="range" id="extract-min-area" min="1" max="30" step="1" value="4">
       </div>
       <div class="slider-row">
-        <span class="label-line"><span>max regions</span><span id="extract-max-points-val">700</span></span>
-        <input type="range" id="extract-max-points" min="50" max="2000" step="10" value="700">
+        <span class="label-line"><span>max regions</span><span id="extract-max-points-val">1500</span></span>
+        <input type="range" id="extract-max-points" min="50" max="6000" step="10" value="1500">
       </div>
       <div class="row">
         <label for="extract-cluster-count">clusters</label>

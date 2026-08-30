@@ -221,18 +221,20 @@ const bgFragmentShader = `
     vec3 base = srgbToLinear(tex.rgb);
     vec4 mask = texture2D(maskMap, vUv);
 
-    // 位置ごとにバラバラの位相で明滅する「呼吸」のベースライン（サイン波）。
+    // 位置ごとにバラバラの位相で明滅する「呼吸」のベースライン。
+    // -ambientAmount 〜 +ambientAmount を往復する符号付きサイン波なので、
+    // MIDIが無い間も明るくなる方向・暗くなる方向の両方にはっきり振れる。
     float ph = hash21(floor(vUv * 60.0));
-    float ambient = ambientAmount * (0.5 + 0.5 * sin(time * (0.4 + 0.25 * ph) + ph * 6.2831));
-    float restLevel = ambientAmount * 0.5;
+    float ambient = ambientAmount * sin(time * (0.4 + 0.25 * ph) + ph * 6.2831);
 
+    // MIDIエンベロープ(0以上、ノートオンで加算)はその上に乗る＝暗くはせず明るさを追加する。
     float delta =
-        mask.r * (midiEnvelopes[0] + ambient - restLevel) +
-        mask.g * (midiEnvelopes[1] + ambient - restLevel) +
-        mask.b * (midiEnvelopes[2] + ambient - restLevel) +
-        mask.a * (midiEnvelopes[3] + ambient - restLevel);
+        mask.r * (midiEnvelopes[0] + ambient) +
+        mask.g * (midiEnvelopes[1] + ambient) +
+        mask.b * (midiEnvelopes[2] + ambient) +
+        mask.a * (midiEnvelopes[3] + ambient);
 
-    float factor = clamp(1.0 + brightGain * delta, 0.12, 3.5);
+    float factor = clamp(1.0 + brightGain * delta, 0.06, 3.5);
     gl_FragColor = vec4(base * factor, tex.a);
   }
 `;
