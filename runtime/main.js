@@ -15,6 +15,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
 const KICK_COLOR = 0xffb74d;
 const MAX_BLOOM_STRENGTH = 3;
+const OUTPUT_ASPECT = 16 / 9; // 出力フレームは常に16:9固定。写真は歪ませずカバーフィットでクロップする。
 
 const els = {
   photoInput: document.getElementById('photo-input'),
@@ -195,25 +196,39 @@ function initRenderer() {
 }
 
 function resize() {
-  const w = els.viewport.clientWidth || 1;
-  const h = els.viewport.clientHeight || 1;
+  const containerW = els.viewport.clientWidth || 1;
+  const containerH = els.viewport.clientHeight || 1;
+
+  // 出力フレームは常に16:9固定。実際のブラウザ/パネル幅がそれと違う形でも、
+  // レンダラーのサイズ自体をコンテナの中に収まる最大の16:9矩形に決める
+  // （#viewportがflexで中央寄せするので、余った分は上下または左右の黒帯になる）。
+  let w, h;
+  if (containerW / containerH > OUTPUT_ASPECT) {
+    h = containerH;
+    w = Math.round(h * OUTPUT_ASPECT);
+  } else {
+    w = containerW;
+    h = Math.round(w / OUTPUT_ASPECT);
+  }
   renderer.setSize(w, h);
   composer.setSize(w, h);
 
-  const viewportAspect = w / h;
-  // "contain" fit: frame the photo's own aspect inside the viewport aspect.
-  if (viewportAspect > currentAspect) {
-    camera.top = 1;
-    camera.bottom = -1;
-    camera.left = -viewportAspect / currentAspect;
-    camera.right = viewportAspect / currentAspect;
-  } else {
-    camera.left = -1;
-    camera.right = 1;
-    camera.top = currentAspect / viewportAspect;
-    camera.bottom = -currentAspect / viewportAspect;
-  }
+  // カメラのフラスタムは常に16:9固定（写真側のアスペクト比には依存しない）。
+  camera.left = -OUTPUT_ASPECT;
+  camera.right = OUTPUT_ASPECT;
+  camera.top = 1;
+  camera.bottom = -1;
   camera.updateProjectionMatrix();
+
+  if (bgMesh) {
+    // "cover" fit: ジオメトリは (currentAspect*2, 2)＝写真自身のアスペクト比のまま
+    // （歪みなし）。scale=1で高さがちょうどフラスタムの高さ(2)に一致するので、
+    // 横に長い写真(currentAspect > 16:9)はscale=1のまま左右がフラスタム外に
+    // はみ出してクロップされる。縦長の写真(currentAspect < 16:9)は逆に幅を
+    // フラスタム幅に合わせるまで拡大し、上下がはみ出してクロップされる。
+    const scale = Math.max(OUTPUT_ASPECT / currentAspect, 1);
+    bgMesh.scale.set(scale, scale, 1);
+  }
 }
 
 function render() {
@@ -287,6 +302,8 @@ function setBackground(source, width, height) {
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.needsUpdate = true;
 
+  // ジオメトリは写真自身のアスペクト比のまま（歪みなし）。16:9出力フレームへの
+  // カバーフィット（はみ出た分をクロップ）は resize() 側で bgMesh.scale を掛けて行う。
   const geometry = new THREE.PlaneGeometry(currentAspect * 2, 2);
   const material = new THREE.ShaderMaterial({
     uniforms: {

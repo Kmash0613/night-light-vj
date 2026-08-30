@@ -163,6 +163,11 @@ input[type="file"] { font-size: 0.74rem; color: var(--text-dim); max-width: 100%
 #viewport {
   position: relative;
   background: #000;
+  /* レンダラーは常に16:9のフレームだけを描画するので（main.jsのresize()参照）、
+     コンテナの実際の形がそれと違う場合は中央寄せして余白を上下/左右の黒帯にする。 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 #viewport canvas { display: block; }
 
