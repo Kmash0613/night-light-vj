@@ -156,6 +156,7 @@ input[type="file"] { font-size: 0.74rem; color: var(--text-dim); max-width: 100%
   background: var(--panel-raised); border: 1px solid var(--border);
   padding: 0 4px; border-radius: 3px; font-family: var(--font-mono);
 }
+.extract-status-error { color: var(--status-error); }
 
 /* ---------- Viewport ---------- */
 

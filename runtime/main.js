@@ -30,6 +30,7 @@ const els = {
   extractMinAreaVal: document.getElementById('extract-min-area-val'),
   extractMaxPoints: document.getElementById('extract-max-points'),
   extractMaxPointsVal: document.getElementById('extract-max-points-val'),
+  extractStatus: document.getElementById('extract-status'),
   extractBtn: document.getElementById('extract-btn'),
   exportPointsBtn: document.getElementById('export-points-btn'),
   brightGain: document.getElementById('bright-gain'),
@@ -504,14 +505,42 @@ function currentExtractOptions() {
 
 let lastExportBlobs = [];
 
-function runExtraction({ silent = false } = {}) {
+// 抽出結果を常時表示するステータス行。0領域のまま気づかない、というのを防ぐ。
+function setExtractStatus(text, kind) {
+  if (!els.extractStatus) return;
+  els.extractStatus.textContent = text;
+  els.extractStatus.className = `hint${kind === 'error' ? ' extract-status-error' : ''}`;
+}
+
+function runExtraction({ silent = false, _retried = false } = {}) {
   if (!loadedImageEl) return;
   const opts = currentExtractOptions();
   const t0 = performance.now();
-  const { maskCanvas, regionCount, exportBlobs } = extractLuminanceMask(loadedImageEl, loadedImageW, loadedImageH, opts);
+  let result;
+  try {
+    result = extractLuminanceMask(loadedImageEl, loadedImageW, loadedImageH, opts);
+  } catch (err) {
+    console.error('extractLuminanceMask failed', err);
+    showToast(`輝度マップの生成に失敗しました: ${err.message}`, 'error');
+    setExtractStatus(`検出: エラー (${err.message})`, 'error');
+    return;
+  }
+  const { maskCanvas, regionCount, exportBlobs } = result;
   applyMaskCanvas(maskCanvas);
   lastExportBlobs = exportBlobs;
   const ms = Math.round(performance.now() - t0);
+
+  // 0領域のまま気づかず「全く明滅しない」状態になるのを防ぐため、top %を上げて自動的に1回だけ再試行する。
+  if (regionCount === 0 && !_retried && opts.topPercent < 40) {
+    const bumped = Math.min(40, opts.topPercent * 2);
+    els.extractTopPercent.value = bumped;
+    els.extractTopPercentVal.textContent = bumped.toFixed(1);
+    showToast(`0領域だったため top % を ${bumped.toFixed(1)}% に上げて再試行します`, 'error');
+    runExtraction({ silent, _retried: true });
+    return;
+  }
+
+  setExtractStatus(`検出: ${regionCount}領域 (top ${opts.topPercent}% / ${ms}ms)`, regionCount === 0 ? 'error' : null);
   if (!silent) showToast(`輝度マップを再生成: ${regionCount}領域 (${ms}ms)`, 'ok');
 }
 
@@ -528,7 +557,7 @@ els.photoInput.addEventListener('change', () => {
       els.viewportEmpty.hidden = true;
       setBackground(loadedImageEl, loadedImageW, loadedImageH);
       runExtraction({ silent: true });
-      showToast(`写真を読み込み、輝度マップを生成しました: ${loadedImageW}×${loadedImageH} / ${lastExportBlobs.length}領域`, 'ok');
+      showToast(`写真を読み込みました: ${loadedImageW}×${loadedImageH} / ${lastExportBlobs.length}領域`, 'ok');
     };
     img.src = reader.result;
   };
