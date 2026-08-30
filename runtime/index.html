@@ -53,8 +53,9 @@
       <p class="hint" id="extract-status">検出: -</p>
       <p class="hint">
         画素ごとに直接、輝度をそのまま重みにしてマップに書き込む（塊検出はしない）。
-        検出した画素は画面のY位置だけで4クラスタ(0-3)に振り分ける（下ほど手前＝
-        cluster0、上に行くほど番号が大きくなる）。各クラスタは
+        検出した画素は疑似深度（画面のY位置＋輝度）を主軸、画面上のXY座標を従軸にした
+        k-meansで4クラスタ(0-3)に振り分ける（手前の群から順に0,1,2...になる。
+        cluster0が最も手前＝config側のKICK=cluster0の慣習に合わせる）。各クラスタは
         <code>config/midi-mapping.json</code> の同じ <code>cluster</code> 番号を持つ
         <code>cluster_trigger</code> トラックに連動する。
         <code>mask-editor/</code> で作った <code>points.json</code> を下の欄で読み込むと、
@@ -198,6 +199,6 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="main.js?v=23"></script>
+<script type="module" src="main.js?v=24"></script>
 </body>
 </html>

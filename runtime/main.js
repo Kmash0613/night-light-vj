@@ -7,7 +7,8 @@
 // クラスタ分けは一度、動作確認を単純化するために丸ごと無くしKICK一本にしていたが、
 // 明滅の土台（輝度マップ生成・MIDI連動・16:9出力）が安定して確認できたので復活させた。
 // 塊（連結成分）検出は使わず、画素ごとの輝度で重みを決める設計は維持したまま、
-// クラスタの割り当てだけを画素のY位置（画面下ほど手前＝cluster0）で振り分けている。
+// クラスタの割り当ては疑似深度を主軸・XY座標を従軸にしたk-means
+// （clusterQualifyingPixels()）で決める（要件定義書 §4）。
 //
 // Phase 2: 深度による3D化（実験的、要件定義書 §5, §9 Phase 2 に対応）
 // 本物の深度推定モデルはこのブラウザ環境には無いため、画素のY位置＋輝度から作る
@@ -480,10 +481,90 @@ function reapplyDepthStrength() {
 // 縮退ケースを何度も踏んだ。今は塊検出をやめ、各画素ごとに直接
 // 「その画素自身の輝度」を重みにする。この式は threshold がどこに来ても
 // 数学的に0除算にならず、閾値を超えた画素は必ず何らかの重みを持つ。
-// クラスタの割り当ても同じ理由で塊単位ではなく画素単位: Y位置だけを見た
-// 簡易的な「奥行きの代用」で、画面下ほど手前＝cluster0（config側の
-// KICK=cluster0の慣習に合わせる）、上に行くほど番号の大きいクラスタになる。
+// クラスタの割り当ても塊検出には頼らず、閾値を超えた画素全体を対象に
+// clusterQualifyingPixels() のk-meansでまとめて分ける（詳細はその関数のコメント参照）。
 // ============================================================
+
+// ============================================================
+// クラスタリング（要件定義書 §4「クラスタリング軸：深度を主、画面上のXY座標を従とする」）
+//
+// 以前は単純に画面のY位置だけで4等分していた（画面下からの割合をそのままクラスタ番号に
+// 変換するだけ）。これだとXY座標をまったく見ておらず、例えば横に並んだ光点群が同じ高さに
+// あるだけで別の被写体でも1クラスタに混ざってしまう。ここでは深度（疑似）を主軸、
+// 画面上のXY座標を従軸にした重み付きk-meansで、実際の光点の集まり方に沿って分ける。
+// ============================================================
+
+const CLUSTER_DEPTH_WEIGHT = 1; // 主軸
+const CLUSTER_XY_WEIGHT = 0.35; // 従軸（深度より弱く効かせる）
+const CLUSTER_KMEANS_ITERATIONS = 8;
+
+// generatePseudoDepthGrid()と同じ考え方（画面下ほど手前・輝度が高いほど少し手前）を、
+// クラスタリング対象の画素1つに直接適用する簡易値。ジオメトリ用のグリッドとは解像度が
+// 異なるので別関数にしてあるが、式そのものは共通。
+function pixelPseudoDepth(normY, luma01) {
+  const fromBottom = 1 - normY;
+  return Math.min(1, Math.max(0, fromBottom - luma01 * 0.25));
+}
+
+// qualifying画素（{x, y, depth}を正規化座標で持つ）をk個のクラスタに分ける。
+// 乱数は使わず、深度でソートして等間隔に選んだ点を初期セントロイドにするので、
+// 同じ入力なら常に同じクラスタリング結果になる（再現性のため）。
+// 戻り値は points と同じ順序・長さのクラスタ番号配列（深度が浅い＝手前の群から
+// 0,1,2...と振り直してあるので、cluster0が最も手前になる。config側のKICK=cluster0の
+// 慣習に合わせるため）。
+function clusterQualifyingPixels(points, k) {
+  const n = points.length;
+  if (n === 0) return new Int32Array(0);
+  const kEff = Math.min(k, n);
+
+  const sorted = points.slice().sort((a, b) => a.depth - b.depth);
+  const centroids = [];
+  for (let i = 0; i < kEff; i++) {
+    const idx = kEff === 1 ? 0 : Math.round((i * (n - 1)) / (kEff - 1));
+    const p = sorted[idx];
+    centroids.push({ depth: p.depth, x: p.x, y: p.y });
+  }
+
+  const assign = new Int32Array(n);
+  for (let iter = 0; iter < CLUSTER_KMEANS_ITERATIONS; iter++) {
+    for (let i = 0; i < n; i++) {
+      const p = points[i];
+      let best = 0, bestDist = Infinity;
+      for (let c = 0; c < centroids.length; c++) {
+        const cc = centroids[c];
+        const dd = (p.depth - cc.depth) * CLUSTER_DEPTH_WEIGHT;
+        const dx = (p.x - cc.x) * CLUSTER_XY_WEIGHT;
+        const dy = (p.y - cc.y) * CLUSTER_XY_WEIGHT;
+        const dist = dd * dd + dx * dx + dy * dy;
+        if (dist < bestDist) { bestDist = dist; best = c; }
+      }
+      assign[i] = best;
+    }
+    const sums = centroids.map(() => ({ depth: 0, x: 0, y: 0, count: 0 }));
+    for (let i = 0; i < n; i++) {
+      const s = sums[assign[i]];
+      s.depth += points[i].depth; s.x += points[i].x; s.y += points[i].y; s.count++;
+    }
+    for (let c = 0; c < centroids.length; c++) {
+      if (sums[c].count === 0) continue; // 空クラスタはセントロイドを動かさずそのまま次のイテレーションへ
+      centroids[c].depth = sums[c].depth / sums[c].count;
+      centroids[c].x = sums[c].x / sums[c].count;
+      centroids[c].y = sums[c].y / sums[c].count;
+    }
+  }
+
+  // 深度の平均が小さい順（＝手前順）に0,1,2...と振り直す。
+  const order = centroids
+    .map((c, idx) => ({ idx, depth: c.depth }))
+    .sort((a, b) => a.depth - b.depth)
+    .map((o) => o.idx);
+  const remap = new Int32Array(centroids.length);
+  order.forEach((origIdx, rank) => { remap[origIdx] = rank; });
+
+  const result = new Int32Array(n);
+  for (let i = 0; i < n; i++) result[i] = remap[assign[i]];
+  return result;
+}
 
 function extractLuminanceMask(source, naturalW, naturalH, opts) {
   const { topPercent, maxDim } = opts;
@@ -532,22 +613,34 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
   // そのリスクが無い。
   const maskData = new Uint8Array(n * 4);
 
-  let qualifying = 0;
+  // 閾値を超えた画素をいったん集めてから、まとめてクラスタリングする（クラスタ番号は
+  // 画素ごとのY位置だけでは決まらないので、全体を見てからでないと割り当てられない）。
+  const qualifyingPoints = [];
   for (let y = 0; y < h; y++) {
-    const fromBottom = (h - 1 - y) / h; // 0（一番下）〜ほぼ1（一番上）
-    const cluster = Math.min(CLUSTER_COUNT - 1, Math.floor(fromBottom * CLUSTER_COUNT));
+    const normY = y / Math.max(1, h - 1);
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       if (luma[i] < threshold) continue;
-      qualifying++;
-      // 重みは画素自身の輝度（0-255を0-1に正規化）で決める。thresholdからの
-      // 距離ではないので、thresholdが255付近になっても0除算的に潰れない。
-      // 最低でも0.35は確保し、閾値ぎりぎりの画素も見えるようにする。
-      const weight = Math.min(1, Math.max(0.35, luma[i] / 255));
-      maskData[i * 4 + cluster] = Math.round(weight * 255);
+      const luma01 = luma[i] / 255;
+      qualifyingPoints.push({
+        i,
+        x: x / Math.max(1, w - 1),
+        y: normY,
+        depth: pixelPseudoDepth(normY, luma01),
+        // 重みは画素自身の輝度（0-255を0-1に正規化）で決める。thresholdからの
+        // 距離ではないので、thresholdが255付近になっても0除算的に潰れない。
+        // 最低でも0.35は確保し、閾値ぎりぎりの画素も見えるようにする。
+        weight: Math.min(1, Math.max(0.35, luma01)),
+      });
     }
   }
 
+  const clusterOf = clusterQualifyingPixels(qualifyingPoints, CLUSTER_COUNT);
+  qualifyingPoints.forEach((p, idx) => {
+    maskData[p.i * 4 + clusterOf[idx]] = Math.round(p.weight * 255);
+  });
+
+  const qualifying = qualifyingPoints.length;
   return { maskData, maskW: w, maskH: h, coveragePercent: (100 * qualifying) / n, threshold };
 }
 
