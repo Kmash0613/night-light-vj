@@ -1,13 +1,10 @@
-name: Deploy MIDI Monitor to Pages
+name: Deploy Tools to Pages
 
 on:
   push:
     branches:
       - main
       - claude/attachment-project-start-0w3pmp
-    paths:
-      - "midi-monitor/**"
-      - ".github/workflows/pages.yml"
   workflow_dispatch:
 
 permissions:
@@ -32,10 +29,19 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
-      - name: Upload midi-monitor/ as Pages artifact
+      - name: Stage site (exclude .git/.github)
+        run: |
+          mkdir -p _site
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='_site' \
+            ./ _site/
+
+      - name: Upload site as Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: midi-monitor
+          path: _site
 
       - name: Deploy to GitHub Pages
         id: deployment

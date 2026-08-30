@@ -9,17 +9,19 @@
 
 ```
 night-light-vj/
+  index.html              # 全ツールへのリンク（GitHub Pagesのトップページ）
   docs/requirements.md    # 要件定義書
-  midi-monitor/           # Phase 0: MIDI実測ツール（実装済み・すぐ使える）
-  config/                 # MIDIマッピング設定（JSON外出し）
-  batch/                  # Phase 3: バッチ前処理ツール（Python, 未実装・雛形のみ）
-  runtime/                # Phase 1-4: リアルタイム描画ランタイム（Three.js, 未実装・雛形のみ）
+  midi-monitor/           # Phase 0: MIDI実測ツール
+  mask-editor/             # Phase 1: 光点マスク（手作業）作成ツール
+  runtime/                 # Phase 1-4: リアルタイム描画ランタイム（Three.js）
+  config/                  # MIDIマッピング設定（JSON外出し）
+  batch/                   # Phase 3: バッチ前処理ツール（Python, 未実装・雛形のみ）
 ```
 
 ## 実装フェーズ（要件定義書 §9）
 
 - [x] **Phase 0 — MIDI実測**: `midi-monitor/` — SEQTRAKの全メッセージをログし、トラック別のノート/CC番号を確定する。実測結果は [`config/midi-mapping.json`](config/midi-mapping.json) に確定済み。
-- [ ] **Phase 1 — 光点明滅の最小構成**: 写真1枚・手作業マスクでMIDI Note Onによる加算合成明滅を確認
+- [x] **Phase 1 — 光点明滅の最小構成**（実装済み・実機での確認待ち）: `mask-editor/` で写真から光点を手作業配置し、`runtime/` でMIDI Note Onによる加算合成明滅とブルームを確認する。カメラは固定（移動なし）。
 - [ ] **Phase 2 — 深度による3D化**: 深度マップ1枚でディスプレイスメント・カメラ移動を実装
 - [ ] **Phase 3 — バッチツール**: Phase 1〜2の手作業を自動化（`batch/`）
 - [ ] **Phase 4 — ライブラリ化**: 複数シーン管理・先読み・カメラパス自動選択
@@ -49,6 +51,26 @@ Web MIDI API はローカルにファイルを置くか、通常のWebサーバ�
 5. 「マッピング設定の下書きを書き出し」で実測に基づく JSON を出力し、
    `config/midi-mapping.schema.json` の形式に沿って `config/midi-mapping.json` を作成する
    （`config/midi-mapping.example.json` を参考に手直しする）
+
+## Phase 1: 光点明滅の最小構成 の使い方
+
+写真も光点データもブラウザ内だけで処理され、どこにも送信されない（サーバーにアップロードしない）。
+
+1. **公開URL の `mask-editor/` を開く**
+   - 夜景写真を読み込み、光点にしたい場所をクリックして配置する
+   - クリックのたびにクラスタ（深度グループ、0=最前景〜3=最遠景が目安）を選んで割り当てる
+     （数字キー `0`〜`7` でも切り替え可能）
+   - 「points.json を書き出し」でダウンロードする
+2. **公開URL の `runtime/` を開く**
+   - 左パネルで元の写真と、1で書き出した `points.json` を読み込む
+   - （写真がまだ無ければ「サンプルを読み込む」でプレースホルダー画像で動作確認できる）
+   - SEQTRAKを接続してノートを鳴らすと、`config/midi-mapping.json` の `cluster` に対応した
+     光点が加算合成・指数減衰（`tau`）で明滅する
+   - 「Cluster Envelopes」のメーターで各クラスタの減衰カーブを確認できる
+   - 「Bloom」のスライダーでブルームの見え方を調整する（SEQTRAKのFX LEVELノブでも
+     `strength` を操作できる — チェックボックスでON/OFF切り替え）
+
+カメラは固定（移動なし）。深度によるディスプレイスメントとカメラ移動はPhase 2で追加する。
 
 ## 設計上の原則（要件定義書 §11）
 

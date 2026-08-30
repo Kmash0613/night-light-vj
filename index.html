@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>夜景写真VJシステム — Tools</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg: #0a0d13;
+    --panel: #12161f;
+    --panel-raised: #171c28;
+    --border: #232a38;
+    --border-strong: #333d54;
+    --text: #eae7de;
+    --text-dim: #8b93a8;
+    --text-faint: #4c5468;
+    --accent: #f2a541;
+    --accent-soft: rgba(242, 165, 65, 0.14);
+    --font-display: 'IBM Plex Mono', ui-monospace, monospace;
+    --font-body: 'IBM Plex Sans JP', 'IBM Plex Sans', -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background:
+      radial-gradient(ellipse 900px 500px at 15% -10%, rgba(242, 165, 65, 0.05), transparent 60%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    padding: 40px 24px 60px;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 {
+    font-family: var(--font-display);
+    font-size: 1.3rem;
+    letter-spacing: 0.03em;
+    margin: 0 0 6px;
+  }
+  .sub { color: var(--text-dim); font-size: 0.9rem; margin: 0 0 32px; line-height: 1.7; max-width: 60ch; }
+  .cards { display: flex; flex-direction: column; gap: 14px; }
+  a.card {
+    display: block;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-top: 2px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 16px 18px;
+    text-decoration: none;
+    color: var(--text);
+    transition: border-color 0.15s ease;
+  }
+  a.card:hover { border-color: var(--accent); }
+  .card .phase {
+    font-family: var(--font-display);
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    background: var(--accent-soft);
+    color: var(--accent);
+    border: 1px solid rgba(242, 165, 65, 0.35);
+    padding: 2px 8px;
+    border-radius: 3px;
+    margin-right: 8px;
+  }
+  .card h2 { font-size: 1rem; margin: 8px 0 4px; }
+  .card p { margin: 0; color: var(--text-dim); font-size: 0.84rem; line-height: 1.6; }
+  footer { margin-top: 32px; color: var(--text-faint); font-size: 0.78rem; }
+  footer a { color: var(--text-dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>夜景写真VJシステム</h1>
+  <p class="sub">夜景写真の光点をSEQTRAKのMIDIに同期して明滅させ、単眼深度推定で疑似3D化した空間を仮想カメラが移動する。開発中のツール群。</p>
+
+  <div class="cards">
+    <a class="card" href="midi-monitor/">
+      <span class="phase">Phase 0</span>
+      <h2>SEQTRAK Signal Monitor</h2>
+      <p>SEQTRAKからの全MIDIメッセージをログ・集計し、トラック別のノート/CC番号を実測する。</p>
+    </a>
+    <a class="card" href="mask-editor/">
+      <span class="phase">Phase 1</span>
+      <h2>Light Point Mask Editor</h2>
+      <p>写真をクリックして光点を手作業で配置し、クラスタ（深度グループ）を割り当てて points.json を書き出す。</p>
+    </a>
+    <a class="card" href="runtime/">
+      <span class="phase">Phase 1</span>
+      <h2>Night Light VJ</h2>
+      <p>写真＋光点データを読み込み、MIDIノートに同期した加算合成の明滅とブルームを確認する（カメラ固定）。</p>
+    </a>
+  </div>
+
+  <footer>
+    要件定義は <a href="docs/requirements.md">docs/requirements.md</a> を参照。
+  </footer>
+</div>
+</body>
+</html>

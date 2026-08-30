@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Night Light VJ — Phase 1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.1/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <aside id="sidebar">
+    <div class="title-block">
+      <h1>Night Light VJ</h1>
+      <span class="phase-tag">Phase 1</span>
+    </div>
+    <p class="sub">写真1枚・手作業マスク・カメラ固定。MIDIノートで光点が加算合成で明滅するかと、ブルームの見え方を確認する。</p>
+
+    <div class="section">
+      <p class="panel-label">Scene</p>
+      <div class="row">
+        <label for="photo-input">写真</label>
+        <input type="file" id="photo-input" accept="image/*">
+      </div>
+      <div class="row">
+        <label for="points-input">光点データ</label>
+        <input type="file" id="points-input" accept="application/json,.json">
+      </div>
+      <div class="row">
+        <button id="sample-btn">サンプルを読み込む</button>
+      </div>
+      <p class="hint">
+        <code>mask-editor/</code> で作った <code>points.json</code> を読み込む。
+        画像・点データはブラウザ内だけで処理され、どこにも送信されない。
+      </p>
+    </div>
+
+    <div class="section">
+      <p class="panel-label">MIDI Input</p>
+      <div class="row">
+        <select id="input-select"><option>デバイスを検索中…</option></select>
+        <button id="refresh-btn">再スキャン</button>
+      </div>
+      <div class="status-line">
+        <span class="status-dot pending" id="status-dot"></span>
+        <span id="status" class="status-text pending">Web MIDI へのアクセスを要求しています…</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <p class="panel-label">Cluster Envelopes</p>
+      <div id="meters"></div>
+    </div>
+
+    <div class="section">
+      <p class="panel-label">Bloom（光点レイヤーのみ対象）</p>
+      <div class="slider-row">
+        <span class="label-line"><span>strength</span><span id="strength-val">1.20</span></span>
+        <input type="range" id="strength" min="0" max="3" step="0.01" value="1.2">
+      </div>
+      <div class="slider-row">
+        <span class="label-line"><span>radius</span><span id="radius-val">0.40</span></span>
+        <input type="range" id="radius" min="0" max="1" step="0.01" value="0.4">
+      </div>
+      <div class="slider-row">
+        <span class="label-line"><span>threshold</span><span id="threshold-val">0.10</span></span>
+        <input type="range" id="threshold" min="0" max="1" step="0.01" value="0.1">
+      </div>
+      <label class="checkbox">
+        <input type="checkbox" id="cc-bloom-toggle" checked>
+        FX LEVEL (CC) で strength を操作する
+      </label>
+    </div>
+
+    <div class="section">
+      <p class="hint">
+        カメラは固定（Phase 2で深度ディスプレイスメント＋移動を追加予定）。
+        マッピングは <code>config/midi-mapping.json</code> を読み込む。
+      </p>
+    </div>
+  </aside>
+
+  <main id="viewport">
+    <div class="viewport-empty" id="viewport-empty">
+      左のパネルから写真と光点データを読み込むか、「サンプルを読み込む」で試してください。<br>
+      SEQTRAKを接続してノートを鳴らすと、対応するクラスタの光点が明滅します。
+    </div>
+  </main>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="main.js"></script>
+</body>
+</html>

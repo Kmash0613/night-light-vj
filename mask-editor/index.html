@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Light Point Mask Editor — Phase 1</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="device-strip">
+  <div class="title-block">
+    <h1>Light Point Mask Editor</h1>
+    <span class="phase-tag">Phase 1 — 手作業マスク作成</span>
+  </div>
+  <p class="sub">写真の上をクリックして光点を配置し、クラスタ（深度グループ）を割り当てる。作成した点群は <code>points.json</code> として書き出し、<a href="../runtime/">runtime/</a> ビューアーで読み込む。</p>
+</header>
+
+<main class="layout">
+  <section class="panel">
+    <p class="panel-label">Photo</p>
+    <div class="row">
+      <input type="file" id="photo-input" accept="image/*">
+      <button id="undo-btn">元に戻す</button>
+      <button id="clear-btn">全クリア</button>
+      <button id="export-btn">points.json を書き出し</button>
+    </div>
+    <p class="hint" style="margin-top:10px;">
+      写真をクリックして光点を追加。右のクラスタ選択で、追加する光点の深度グループ（0=最前景 〜 3=最遠景、目安）を切り替える。
+      1つ手前で削除したい場合は「元に戻す」。
+    </p>
+    <div class="canvas-wrap" id="canvas-wrap">
+      <div class="canvas-empty" id="canvas-empty">
+        上の「ファイルを選択」から夜景写真を読み込んでください。<br>
+        画像はブラウザ内だけで処理され、どこにも送信されません。
+      </div>
+      <canvas id="stage" hidden></canvas>
+    </div>
+  </section>
+
+  <aside>
+    <section class="panel">
+      <p class="panel-label">Cluster</p>
+      <div class="cluster-picker" id="cluster-picker"></div>
+      <p class="hint" style="margin-top:10px; margin-bottom:0;">
+        0: 最前景のネオン等 / 1〜2: 中景 / 3: 最遠景の窓明かり等 —
+        <code>config/midi-mapping.json</code> の <code>notes[].cluster</code> と対応させる。
+      </p>
+    </section>
+    <section class="panel">
+      <p class="panel-label">Points</p>
+      <div class="count-row" id="count-list"></div>
+    </section>
+  </aside>
+</main>
+
+<footer>
+  <p>
+    書き出した <code>points.json</code> と写真ファイルを <code>runtime/</code> のビューアーで読み込むと、
+    MIDIノートに応じて光点が明滅する。座標は画像に対する相対値(0〜1)で保存されるため、
+    元画像と同じアスペクト比であれば解像度が変わっても再利用できる。
+  </p>
+</footer>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="main.js"></script>
+</body>
+</html>

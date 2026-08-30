@@ -1,12 +1,26 @@
 # ランタイム（Three.js）
 
-Phase 1〜4 で実装するコンポーネント。要件定義書 §5, §9 参照。
+要件定義書 §5, §9 参照。
 
-現時点では未着手。着手順序は要件定義書のフェーズに従う：
+## Phase 1（実装済み・実機での確認待ち）
 
-1. **Phase 1**: 写真1枚・手作業マスクで、MIDI Note On による光点の加算合成明滅を確認（カメラ動きなし）
+写真1枚・手作業マスク（`../mask-editor/` で作成）で、MIDI Note On による光点の加算合成明滅を確認する。
+カメラは固定（移動なし）。ブルームは光点レイヤーのみに適用され、背景写真にはかからない
+（three.js の selective bloom = "darken non-bloomed" 手法。`main.js` 参照）。
+
+- Three.js は `index.html` の importmap で CDN (unpkg) から読み込む。ビルド不要
+- `../config/midi-mapping.json` を起動時に `fetch` する。`file://` では動かないため、
+  ローカルサーバー経由（`python -m http.server`）か GitHub Pages 経由で開くこと
+- 写真・光点データは `<input type="file">` でローカル読み込みし、どこにも送信しない
+- 明滅エンベロープ: `env = velocity/127 * exp(-t/tau)`。クラスタは複数トラックが乗る場合、
+  各トラックのエンベロープの最大値をそのクラスタの値として採用する
+
+未実装（Phase 2以降）: 深度ディスプレイスメント、カメラ移動、DOF、カラーグレーディング、
+`camera_kick` / `hue_shift` / `bloom_spike` / `scene_cut` ロールの反映。
+
+## 今後の着手順序
+
+1. ~~**Phase 1**: 光点の加算合成明滅を確認~~ → 実装済み
 2. **Phase 2**: 深度マップ1枚を手動投入し、ディスプレイスメントとカメラ移動を実装
-3. **Phase 3**: バッチツール（`../batch/`）の出力を読み込めるようにする
-4. **Phase 4**: `index.json` に基づく複数シーン管理・先読み・自動カメラパス選択
-
-Phase 1 の着手には `../config/midi-mapping.json`（`../midi-monitor/` での実測結果）が前提となる。
+3. **Phase 3**: バッチツール（`../batch/`）の出力（`index.json`）を読み込めるようにする
+4. **Phase 4**: 複数シーン管理・先読み・自動カメラパス選択
