@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MIDI Monitor — Phase 0</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>SEQTRAK MIDI Monitor <span class="phase">Phase 0</span></h1>
+  <p class="sub">Web MIDI API で受信した全メッセージをログ出力し、トラック別のノート/CC番号を実測する。</p>
+</header>
+
+<section class="panel" id="connection-panel">
+  <div class="row">
+    <label for="input-select">MIDI入力デバイス</label>
+    <select id="input-select"><option>デバイスを検索中…</option></select>
+    <button id="refresh-btn">再スキャン</button>
+  </div>
+  <p id="status" class="status status-pending">Web MIDI へのアクセスを要求しています…</p>
+</section>
+
+<section class="panel">
+  <div class="row controls">
+    <button id="clear-btn">ログをクリア</button>
+    <button id="export-log-btn">ログをJSONで書き出し</button>
+    <button id="export-csv-btn">ログをCSVで書き出し</button>
+    <button id="export-mapping-btn">マッピング設定の下書きを書き出し</button>
+    <label class="checkbox"><input type="checkbox" id="pause-clock" checked> Clock(F8)を非表示</label>
+    <label class="checkbox"><input type="checkbox" id="pause-log"> ログ更新を一時停止</label>
+    <span class="count" id="msg-count">0 messages</span>
+  </div>
+</section>
+
+<main class="columns">
+  <section class="panel summary-panel">
+    <h2>チャンネル / ノート 集計</h2>
+    <p class="hint">SEQTRAK の各トラックを個別に鳴らして、どのチャンネル・ノート番号・ベロシティ範囲が出るかを確認する。</p>
+    <table id="summary-table">
+      <thead>
+        <tr>
+          <th>種別</th><th>Ch</th><th>Note/CC#</th>
+          <th>回数</th><th>Vel/Val min</th><th>Vel/Val max</th><th>最終受信</th><th>トラック名(任意)</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section class="panel log-panel">
+    <h2>Raw ログ</h2>
+    <div id="log" class="log"></div>
+  </section>
+</main>
+
+<footer>
+  <p>
+    ヒント: Chrome で <code>file://</code> から開くと Web MIDI がブロックされる場合があります。
+    その場合はこのフォルダで <code>python -m http.server 8000</code> を実行し、
+    <code>http://localhost:8000/</code> で開いてください。
+  </p>
+</footer>
+
+<script src="main.js"></script>
+</body>
+</html>

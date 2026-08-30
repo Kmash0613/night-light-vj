@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MIDI Mapping Configuration",
+  "description": "SEQTRAK からのMIDIメッセージを光点クラスタ/映像パラメータへ割り当てる設定。実機計測のうえハードコードせず本ファイルで管理する（要件定義書 §6, §11-4）。",
+  "type": "object",
+  "required": ["notes", "control_changes"],
+  "properties": {
+    "_comment": { "type": "string" },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "delay_compensation_ms": {
+      "type": "number",
+      "description": "映像側の遅延補正量（-100〜+100ms）。要件定義書 §6 遅延補正。",
+      "minimum": -100,
+      "maximum": 100,
+      "default": 0
+    },
+    "notes": {
+      "type": "array",
+      "description": "Note On をトリガーとする割り当て（光点クラスタ、カメラキック等）。",
+      "items": {
+        "type": "object",
+        "required": ["name", "channel", "note", "role"],
+        "properties": {
+          "name": { "type": "string", "description": "SEQTRAKトラック名（KICK, SNARE 等）" },
+          "channel": { "type": "integer", "minimum": 1, "maximum": 16 },
+          "note": { "type": "integer", "minimum": 0, "maximum": 127 },
+          "velocity_range": {
+            "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2
+          },
+          "cluster": {
+            "type": ["integer", "null"],
+            "description": "対応する光点クラスタID（meta.json の clusters[].id）。単一クラスタでなくても良い。"
+          },
+          "role": {
+            "type": ["string", "null"],
+            "enum": ["cluster_trigger", "camera_kick", "hue_shift", "bloom_spike", "scene_cut", null],
+            "description": "このトリガーが映像側で何を駆動するか。"
+          },
+          "tau": {
+            "type": "number",
+            "description": "明滅エンベロープの減衰時定数（秒）。トラックごとに個別設定可能。§5 参照。",
+            "default": 0.15
+          }
+        }
+      }
+    },
+    "control_changes": {
+      "type": "array",
+      "description": "CCによる連続パラメータの割り当て（ブルーム量、DOF、カメラ振幅等）。",
+      "items": {
+        "type": "object",
+        "required": ["name", "channel", "cc_number", "target"],
+        "properties": {
+          "name": { "type": "string" },
+          "channel": { "type": "integer", "minimum": 1, "maximum": 16 },
+          "cc_number": { "type": "integer", "minimum": 0, "maximum": 127 },
+          "value_range": {
+            "type": "array", "items": { "type": "integer" }, "minItems": 2, "maxItems": 2
+          },
+          "target": {
+            "type": ["string", "null"],
+            "enum": ["bloom_amount", "dof_focus_distance", "camera_amplitude", null]
+          }
+        }
+      }
+    }
+  }
+}

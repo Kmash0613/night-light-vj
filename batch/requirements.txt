@@ -1,0 +1,10 @@
+# Phase 3 で使用予定。バージョンはDepth Anything V2側の要件確認後に確定する。
+numpy
+opencv-python
+pillow
+scipy
+scikit-image
+# torch / torchvision: Depth Anything V2 用。CUDA有無で導入コマンドが変わるため
+# 公式手順 (https://pytorch.org/get-started/locally/) に従ってインストールすること。
+# torch
+# torchvision

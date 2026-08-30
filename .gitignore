@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+
+# Batch pipeline data (large binaries; not for git)
+batch/input/*
+!batch/input/.gitkeep
+batch/scenes/*
+!batch/scenes/.gitkeep
+
+# MIDI monitor exports
+midi-monitor/*.json
+midi-monitor/*.csv
+!midi-monitor/style.css
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local generated mapping (keep example/schema, not the actual measured one)
+config/midi-mapping.json

@@ -1,0 +1,21 @@
+{
+  "_comment": "要件定義書 §6 の初期案をもとにしたプレースホルダー。note/channel/cc_number は Phase 0 (midi-monitor/) での実測後に確定させること。数値はすべて仮の値であり実測前提。",
+  "generated_at": null,
+  "delay_compensation_ms": 0,
+  "notes": [
+    { "name": "KICK",   "channel": 1, "note": 36, "velocity_range": [1, 127], "cluster": 0, "role": "cluster_trigger", "tau": 0.12 },
+    { "name": "KICK_CAMERA_KICK", "channel": 1, "note": 36, "velocity_range": [1, 127], "cluster": null, "role": "camera_kick", "tau": 0.1 },
+    { "name": "SNARE",  "channel": 1, "note": 38, "velocity_range": [1, 127], "cluster": 1, "role": "cluster_trigger", "tau": 0.15 },
+    { "name": "HIHAT",  "channel": 1, "note": 42, "velocity_range": [1, 127], "cluster": 2, "role": "cluster_trigger", "tau": 0.08 },
+    { "name": "PERC",   "channel": 1, "note": 43, "velocity_range": [1, 127], "cluster": 3, "role": "cluster_trigger", "tau": 0.08 },
+    { "name": "SYNTH1", "channel": 2, "note": 60, "velocity_range": [1, 127], "cluster": null, "role": "hue_shift", "tau": 0.3 },
+    { "name": "SYNTH2", "channel": 3, "note": 60, "velocity_range": [1, 127], "cluster": null, "role": "hue_shift", "tau": 0.3 },
+    { "name": "DX",     "channel": 4, "note": 60, "velocity_range": [1, 127], "cluster": null, "role": "bloom_spike", "tau": 0.2 },
+    { "name": "SAMPLER","channel": 5, "note": 60, "velocity_range": [1, 127], "cluster": null, "role": "scene_cut", "tau": 0.0 }
+  ],
+  "control_changes": [
+    { "name": "FX_LEVEL",  "channel": 1, "cc_number": 94, "value_range": [0, 127], "target": "bloom_amount" },
+    { "name": "HIGH_PASS", "channel": 1, "cc_number": 74, "value_range": [0, 127], "target": "dof_focus_distance" },
+    { "name": "REPEATER",  "channel": 1, "cc_number": 20, "value_range": [0, 127], "target": "camera_amplitude" }
+  ]
+}
