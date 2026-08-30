@@ -358,7 +358,10 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
       if (py < h - 1 && !visited[p + w] && luma[p + w] >= threshold) { visited[p + w] = 1; stack[sp++] = p + w; pixels.push(p + w); }
     }
     const area = pixels.length;
-    if (area >= minArea) {
+    // 「光点」ではなく空や壁のグラデーションが丸ごと1つの塊としてつながって
+    // しまうことがある（topPercentを上げすぎた時ほど起きやすい）。画像の5%を
+    // 超えるような塊は光点ではないとみなして除外する。
+    if (area >= minArea && area <= n * 0.05) {
       blobs.push({
         pixels,
         area,
@@ -539,8 +542,8 @@ function runExtraction({ silent = false, _retried = false } = {}) {
   const ms = Math.round(performance.now() - t0);
 
   // 0領域のまま気づかず「全く明滅しない」状態になるのを防ぐため、top %を上げて自動的に1回だけ再試行する。
-  if (regionCount === 0 && !_retried && opts.topPercent < 40) {
-    const bumped = Math.min(40, opts.topPercent * 2);
+  if (regionCount === 0 && !_retried && opts.topPercent < 20) {
+    const bumped = Math.min(20, opts.topPercent * 2);
     els.extractTopPercent.value = bumped;
     els.extractTopPercentVal.textContent = bumped.toFixed(1);
     showToast(`0領域だったため top % を ${bumped.toFixed(1)}% に上げて再試行します`, 'error');
