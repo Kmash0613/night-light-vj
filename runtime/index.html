@@ -23,7 +23,7 @@
       <h1>Night Light VJ</h1>
       <span class="phase-tag">Phase 1</span>
     </div>
-    <p class="sub">写真1枚・手作業マスク・カメラ固定。MIDIノートで光点が加算合成で明滅するかと、ブルームの見え方を確認する。</p>
+    <p class="sub">写真の輝度マップに応じて、写真そのものの明るさをMIDIノートで上げ下げする。個別の光点は打たない。カメラは固定。</p>
 
     <div class="section">
       <p class="panel-label">Scene</p>
@@ -35,15 +35,15 @@
         <button id="sample-btn">サンプルを読み込む</button>
       </div>
       <p class="hint">
-        写真を読み込むと、輝度の高い場所から光点を自動抽出する（下の Auto Extract 参照）。
+        写真を読み込むと、輝度の高い場所（ネオン等）から輝度マップを自動生成する（下の Auto Extract 参照）。
         画像はブラウザ内だけで処理され、どこにも送信されない。
       </p>
     </div>
 
     <div class="section">
-      <p class="panel-label">Auto Extract（輝度から光点を自動生成）</p>
+      <p class="panel-label">Auto Extract（輝度マップの自動生成）</p>
       <div class="slider-row">
-        <span class="label-line"><span>top %（明るい上位何%を光点にするか）</span><span id="extract-top-percent-val">3.0</span></span>
+        <span class="label-line"><span>top %（明るい上位何%をマップに含めるか）</span><span id="extract-top-percent-val">3.0</span></span>
         <input type="range" id="extract-top-percent" min="0.5" max="15" step="0.5" value="3">
       </div>
       <div class="slider-row">
@@ -51,7 +51,7 @@
         <input type="range" id="extract-min-area" min="1" max="30" step="1" value="4">
       </div>
       <div class="slider-row">
-        <span class="label-line"><span>max points</span><span id="extract-max-points-val">700</span></span>
+        <span class="label-line"><span>max regions</span><span id="extract-max-points-val">700</span></span>
         <input type="range" id="extract-max-points" min="50" max="2000" step="10" value="700">
       </div>
       <div class="row">
@@ -59,16 +59,16 @@
         <select id="extract-cluster-count">
           <option value="3">3</option>
           <option value="4" selected>4</option>
-          <option value="5">5</option>
         </select>
         <button id="extract-btn">再抽出</button>
-        <button id="export-points-btn">points.json を書き出し</button>
+        <button id="export-points-btn">検出データを書き出し</button>
       </div>
       <p class="hint">
         深度推定はまだ無い（Phase 2）ため、クラスタは「画面下ほど手前・面積が大きいほど手前」という
-        簡易ルールで割り当てる暫定版。<code>config/midi-mapping.json</code> の cluster と対応。
-        <code>mask-editor/</code> で作った <code>points.json</code> を下の欄で読み込めば、
-        自動抽出の代わりに手動データを使うこともできる。
+        簡易ルールで割り当てる暫定版。4クラスタは <code>config/midi-mapping.json</code> の
+        cluster 0〜3 と対応（RGBAの4チャンネルに1クラスタずつ焼き込むため上限4）。
+        <code>mask-editor/</code> で作った <code>points.json</code> を下の欄で読み込むと、
+        自動抽出の代わりにその点群からマップを作る。
       </p>
       <div class="row">
         <label for="points-input">光点データ（手動、任意）</label>
@@ -94,34 +94,25 @@
     </div>
 
     <div class="section">
-      <p class="panel-label">Light Points</p>
+      <p class="panel-label">Brightness</p>
       <div class="slider-row">
-        <span class="label-line"><span>size</span><span id="point-size-val">34</span></span>
-        <input type="range" id="point-size" min="6" max="80" step="1" value="34">
+        <span class="label-line"><span>bright gain（明滅の強さ）</span><span id="bright-gain-val">1.20</span></span>
+        <input type="range" id="bright-gain" min="0" max="3" step="0.01" value="1.2">
       </div>
       <div class="slider-row">
         <span class="label-line"><span>ambient breathing</span><span id="ambient-val">0.35</span></span>
         <input type="range" id="ambient" min="0" max="1" step="0.01" value="0.35">
       </div>
       <p class="hint">
-        MIDIが鳴っていない間も、街が微かに息をするように光点を明滅させる量。
-        「呼吸する街」の土台（要件定義書 §1）。0にするとMIDIノートでのみ光る。
+        輝度マップの値が乗っている場所だけ、MIDIノートに応じて元の写真の明るさを上下させる
+        （マップが0の場所は写真のまま変化しない）。<code>ambient breathing</code> は
+        MIDIが鳴っていない間の基準レベルで、そこを中心に明るく/暗く振れる
+        （「呼吸する街」§1）。0にするとMIDIノートが無いときは写真のまま静止する。
       </p>
     </div>
 
     <div class="section">
-      <p class="panel-label">Background</p>
-      <div class="slider-row">
-        <span class="label-line"><span>luminance sway（写真自体の輝度ゆらぎ）</span><span id="bg-sway-val">0.30</span></span>
-        <input type="range" id="bg-sway" min="0" max="0.8" step="0.01" value="0.3">
-      </div>
-      <p class="hint">
-        元の写真も、明るい場所（ネオン等）ほど強くゆっくり明滅する。0で元の写真のまま静止。
-      </p>
-    </div>
-
-    <div class="section">
-      <p class="panel-label">Bloom（光点レイヤーのみ対象）</p>
+      <p class="panel-label">Bloom</p>
       <div class="slider-row">
         <span class="label-line"><span>strength</span><span id="strength-val">1.60</span></span>
         <input type="range" id="strength" min="0" max="3" step="0.01" value="1.6">
@@ -131,13 +122,17 @@
         <input type="range" id="radius" min="0" max="1" step="0.01" value="0.45">
       </div>
       <div class="slider-row">
-        <span class="label-line"><span>threshold</span><span id="threshold-val">0.12</span></span>
-        <input type="range" id="threshold" min="0" max="1" step="0.01" value="0.12">
+        <span class="label-line"><span>threshold</span><span id="threshold-val">0.55</span></span>
+        <input type="range" id="threshold" min="0" max="1" step="0.01" value="0.55">
       </div>
       <label class="checkbox">
         <input type="checkbox" id="cc-bloom-toggle" checked>
         FX LEVEL (CC) で strength を操作する
       </label>
+      <p class="hint">
+        通常のUnrealBloomPass。輝度がthresholdを超えた画素だけが光る
+        （個別レイヤーではなく画面全体の輝度基準）。
+      </p>
     </div>
 
     <div class="section">
@@ -150,8 +145,8 @@
 
   <main id="viewport">
     <div class="viewport-empty" id="viewport-empty">
-      左のパネルから写真と光点データを読み込むか、「サンプルを読み込む」で試してください。<br>
-      SEQTRAKを接続してノートを鳴らすと、対応するクラスタの光点が明滅します。
+      左のパネルから写真を読み込むか、「サンプルを読み込む」で試してください。<br>
+      SEQTRAKを接続してノートを鳴らすと、対応するクラスタの輝度マップの場所が明滅します。
     </div>
   </main>
 </div>

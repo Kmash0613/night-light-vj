@@ -21,7 +21,7 @@ night-light-vj/
 ## 実装フェーズ（要件定義書 §9）
 
 - [x] **Phase 0 — MIDI実測**: `midi-monitor/` — SEQTRAKの全メッセージをログし、トラック別のノート/CC番号を確定する。実測結果は [`config/midi-mapping.json`](config/midi-mapping.json) に確定済み。
-- [x] **Phase 1 — 光点明滅の最小構成**（実装済み・実機での確認待ち）: `runtime/` に写真を読み込むと輝度から光点を自動抽出し、MIDI Note Onによる加算合成明滅とブルームを確認できる。手動配置したい場合は `mask-editor/`（任意）。カメラは固定（移動なし）。
+- [x] **Phase 1 — 輝度マップによる明滅の最小構成**（実装済み・実機での確認待ち）: `runtime/` に写真を読み込むと輝度マップを自動生成し、MIDI Note Onに応じて写真そのものの明るさを上げ下げする（個別の光点は打たない）。手動でマップの元データを作りたい場合は `mask-editor/`（任意）。カメラは固定（移動なし）。
 - [ ] **Phase 2 — 深度による3D化**: 深度マップ1枚でディスプレイスメント・カメラ移動を実装
 - [ ] **Phase 3 — バッチツール**: Phase 1〜2の手作業を自動化（`batch/`）
 - [ ] **Phase 4 — ライブラリ化**: 複数シーン管理・先読み・カメラパス自動選択
@@ -52,20 +52,22 @@ Web MIDI API はローカルにファイルを置くか、通常のWebサーバ�
    `config/midi-mapping.schema.json` の形式に沿って `config/midi-mapping.json` を作成する
    （`config/midi-mapping.example.json` を参考に手直しする）
 
-## Phase 1: 光点明滅の最小構成 の使い方
+## Phase 1: 輝度マップによる明滅 の使い方
 
 写真も光点データもブラウザ内だけで処理され、どこにも送信されない（サーバーにアップロードしない）。
+個別の光点（パーティクル）は打たず、写真自体の明るさを輝度マップに応じて上げ下げする方式。
 
 1. **公開URL の `runtime/` を開く**
    - 左パネルで夜景写真を読み込む（写真がまだ無ければ「サンプルを読み込む」でも可）
-   - 読み込むと同時に、写真の輝度が高い場所から光点を自動抽出する（「Auto Extract」パネル）。
-     `top %` / `min area` / `max points` / `clusters` を変えて「再抽出」で調整できる
+   - 読み込むと同時に、写真の輝度が高い場所（ネオン等）から「輝度マップ」を自動生成する
+     （「Auto Extract」パネル）。`top %` / `min area` / `max regions` / `clusters` を変えて
+     「再抽出」で調整できる
    - SEQTRAKを接続してノートを鳴らすと、`config/midi-mapping.json` の `cluster` に対応した
-     光点が加算合成・指数減衰（`tau`）で明滅する
-   - 「Cluster Envelopes」のメーターで各クラスタの減衰カーブを確認できる
-   - 「Light Points」の `ambient breathing`、「Background」の `luminance sway` で、
-     MIDIが鳴っていない間の光点／写真自体の明滅（呼吸）を調整する
-   - 「Bloom」のスライダーでブルームの見え方を調整する（SEQTRAKのFX LEVELノブでも
+     マップ上の場所だけ、写真の明るさが指数減衰（`tau`）で上下する
+   - 「Cluster Envelopes」のメーターで各クラスタのMIDIエンベロープを確認できる
+   - 「Brightness」の `ambient breathing` で、MIDIが鳴っていない間の明滅（呼吸）の強さを、
+     `bright gain` で明滅全体の強さを調整する
+   - 「Bloom」のスライダーで、明るくなった場所が光る度合いを調整する（SEQTRAKのFX LEVELノブでも
      `strength` を操作できる — チェックボックスでON/OFF切り替え）
 2. **手動で光点を配置したい場合は `mask-editor/` を使う**（任意）
    - 写真をクリックして光点を配置し、クラスタを割り当てる（数字キー `0`〜`7` でも切り替え可能）
