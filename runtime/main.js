@@ -221,11 +221,12 @@ function resize() {
   camera.updateProjectionMatrix();
 
   if (bgMesh) {
-    // 切り分け用に一時的に "contain" fit（CSSのbackground-size:containと同じ）に
-    // している。写真は歪ませず、全体が必ずフラスタム内に収まるように縮小するので、
-    // 横長の写真は上下に、縦長の写真は左右に黒帯が出るが、クロップは一切発生しない。
-    // （元は "cover" fit で Math.max だった。切り分けが終わったら戻す。）
-    const scale = Math.min(OUTPUT_ASPECT / currentAspect, 1);
+    // "cover" fit: ジオメトリは (currentAspect*2, 2)＝写真自身のアスペクト比のまま
+    // （歪みなし）。scale=1で高さがちょうどフラスタムの高さ(2)に一致するので、
+    // 横に長い写真(currentAspect > 16:9)はscale=1のまま左右がフラスタム外に
+    // はみ出してクロップされる。縦長の写真(currentAspect < 16:9)は逆に幅を
+    // フラスタム幅に合わせるまで拡大し、上下がはみ出してクロップされる。
+    const scale = Math.max(OUTPUT_ASPECT / currentAspect, 1);
     bgMesh.scale.set(scale, scale, 1);
   }
 }
