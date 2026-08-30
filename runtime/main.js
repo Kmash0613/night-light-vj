@@ -380,9 +380,16 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
   const maskCtx = maskCanvas.getContext('2d');
   const maskData = maskCtx.createImageData(w, h); // transparent black by default
 
+  // 重みは threshold で 0.35、255 で 1.0 になるように下駄を履かせる。
+  // 白飛び（255）が多い写真だと threshold 自体が255になり得て、その場合
+  // luma===threshold===255 の画素ばかりになる。以前の式 (luma-threshold)/(255-threshold)
+  // だとこのケースで全画素の重みが常に0になり、輝度マップが実質空になって
+  // 何も明滅しなくなっていた。
+  const range = Math.max(16, 255 - threshold);
   for (const blob of capped) {
     for (const idx of blob.pixels) {
-      const weight = Math.min(1, Math.max(0, (luma[idx] - threshold) / Math.max(1, 255 - threshold)));
+      const t = Math.min(1, Math.max(0, (luma[idx] - threshold) / range));
+      const weight = 0.35 + 0.65 * t;
       const di = idx * 4; // R channel
       const v = Math.round(weight * 255);
       if (v > maskData.data[di]) maskData.data[di] = v;
