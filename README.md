@@ -56,15 +56,15 @@ Web MIDI API はローカルにファイルを置くか、通常のWebサーバ�
 
 写真も光点データもブラウザ内だけで処理され、どこにも送信されない（サーバーにアップロードしない）。
 個別の光点（パーティクル）は打たず、写真自体の明るさを輝度マップに応じて上げ下げする方式。
+クラスタ分けはいったん無くし、輝度マップ全体がKICKトラックに一律に連動する最小構成。
 
 1. **公開URL の `runtime/` を開く**
    - 左パネルで夜景写真を読み込む（写真がまだ無ければ「サンプルを読み込む」でも可）
    - 読み込むと同時に、写真の輝度が高い場所（ネオン等）から「輝度マップ」を自動生成する
-     （「Auto Extract」パネル）。`top %` / `min area` / `max regions` / `clusters` を変えて
-     「再抽出」で調整できる
-   - SEQTRAKを接続してノートを鳴らすと、`config/midi-mapping.json` の `cluster` に対応した
-     マップ上の場所だけ、写真の明るさが指数減衰（`tau`）で上下する
-   - 「Cluster Envelopes」のメーターで各クラスタのMIDIエンベロープを確認できる
+     （「Auto Extract」パネル）。`top %` / `min area` / `max regions` を変えて「再抽出」で調整できる
+   - SEQTRAKでKICK（`config/midi-mapping.json` の `name: "KICK"`）を鳴らすと、
+     マップ上の場所が一律に指数減衰（`tau`）で明るさが上下する
+   - 「Kick Envelope」のメーターでMIDIエンベロープを確認できる
    - 「Brightness」の `ambient breathing` で、MIDIが鳴っていない間の明滅（呼吸）の強さを、
      `bright gain` で明滅全体の強さを調整する
    - 「Bloom」のスライダーで、明るくなった場所が光る度合いを調整する（SEQTRAKのFX LEVELノブでも

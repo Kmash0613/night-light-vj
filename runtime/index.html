@@ -23,7 +23,7 @@
       <h1>Night Light VJ</h1>
       <span class="phase-tag">Phase 1</span>
     </div>
-    <p class="sub">写真の輝度マップに応じて、写真そのものの明るさをMIDIノートで上げ下げする。個別の光点は打たない。カメラは固定。</p>
+    <p class="sub">写真の輝度マップに応じて、写真そのものの明るさをKICKに連動させて上げ下げする。個別の光点は打たず、クラスタ分けも無い最小構成。カメラは固定。</p>
 
     <div class="section">
       <p class="panel-label">Scene</p>
@@ -55,20 +55,15 @@
         <input type="range" id="extract-max-points" min="50" max="6000" step="10" value="1500">
       </div>
       <div class="row">
-        <label for="extract-cluster-count">clusters</label>
-        <select id="extract-cluster-count">
-          <option value="3">3</option>
-          <option value="4" selected>4</option>
-        </select>
         <button id="extract-btn">再抽出</button>
         <button id="export-points-btn">検出データを書き出し</button>
       </div>
       <p class="hint">
-        深度推定はまだ無い（Phase 2）ため、クラスタは「画面下ほど手前・面積が大きいほど手前」という
-        簡易ルールで割り当てる暫定版。4クラスタは <code>config/midi-mapping.json</code> の
-        cluster 0〜3 と対応（RGBAの4チャンネルに1クラスタずつ焼き込むため上限4）。
+        クラスタ分けは無し。検出した領域はすべて同じ輝度マップに含まれ、KICKトラックの
+        Note Onに連動して一律に明滅する（<code>config/midi-mapping.json</code> の name="KICK"
+        のトラックを見る。無ければ cluster_trigger 全体をKICK扱いにする）。
         <code>mask-editor/</code> で作った <code>points.json</code> を下の欄で読み込むと、
-        自動抽出の代わりにその点群からマップを作る。
+        自動抽出の代わりにその点群からマップを作る（clusterの値は現状無視される）。
       </p>
       <div class="row">
         <label for="points-input">光点データ（手動、任意）</label>
@@ -89,7 +84,7 @@
     </div>
 
     <div class="section">
-      <p class="panel-label">Cluster Envelopes</p>
+      <p class="panel-label">Kick Envelope</p>
       <div id="meters"></div>
     </div>
 
@@ -146,7 +141,7 @@
   <main id="viewport">
     <div class="viewport-empty" id="viewport-empty">
       左のパネルから写真を読み込むか、「サンプルを読み込む」で試してください。<br>
-      SEQTRAKを接続してノートを鳴らすと、対応するクラスタの輝度マップの場所が明滅します。
+      SEQTRAKでKICKを鳴らすと、輝度マップの場所が一律に明滅します。
     </div>
   </main>
 </div>

@@ -1,8 +1,9 @@
-// Phase 1: 光点明滅の最小構成（輝度マップ方式）
+// Phase 1: 光点明滅の最小構成（輝度マップ方式・簡易版）
 // 写真1枚 + カメラ固定。個別の光点（パーティクル）は打たず、写真の輝度が高い場所を
-// 検出して「輝度マップ」（クラスタごとの重み、RGBAの4チャンネルに焼き込む）を作り、
-// MIDI Note On に応じてそのマップの値が乗っている場所だけ、元の写真の明るさを
-// 上げ下げする。ブルームは通常のUnrealBloomPass（画面全体の輝度しきい値）。
+// 検出して「輝度マップ」（重み1チャンネル）を作り、KICKトラックのNote Onに応じて
+// そのマップの値が乗っている場所だけ、元の写真の明るさを上げ下げする。
+// クラスタ分け（トラックごとに別々の場所を光らせる）はいったん無くし、
+// 全ての光る場所がKICKに連動する最小構成にしている。ブルームは通常のUnrealBloomPass。
 // 要件定義書 §5, §9 Phase 1 に対応。
 
 import * as THREE from 'three';
@@ -11,8 +12,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-const CLUSTER_COLORS = [0xffb74d, 0xff7a59, 0x6fb7e0, 0xc792ea]; // cluster 0-3
-const MAX_CLUSTERS = 4; // RGBAの4チャンネルに1クラスタずつ焼き込むための上限
+const KICK_COLOR = 0xffb74d;
 const MAX_BLOOM_STRENGTH = 3;
 
 const els = {
@@ -30,7 +30,6 @@ const els = {
   extractMinAreaVal: document.getElementById('extract-min-area-val'),
   extractMaxPoints: document.getElementById('extract-max-points'),
   extractMaxPointsVal: document.getElementById('extract-max-points-val'),
-  extractClusterCount: document.getElementById('extract-cluster-count'),
   extractBtn: document.getElementById('extract-btn'),
   exportPointsBtn: document.getElementById('export-points-btn'),
   brightGain: document.getElementById('bright-gain'),
@@ -61,15 +60,32 @@ function showToast(text, kind) {
 // ============================================================
 
 let mapping = { notes: [], control_changes: [] };
-let noteEnvelopes = []; // parallel to mapping.notes: {value, start}
-const midiEnvelopes = new Float32Array(MAX_CLUSTERS); // MIDI駆動分のみ（アンビエントはシェーダー側で加算）
+let kickNoteEnvelopes = []; // KICKにマッチしたnote entryごとの {value, start}（通常は1個）
+let kickEntryIndices = []; // mapping.notes の中で「KICK」とみなすエントリのindex
+let kickEnvelope = 0; // 現在のKICKエンベロープ値（複数エントリがあれば最大値）
 
 async function loadMapping() {
   try {
     const res = await fetch('../config/midi-mapping.json', { cache: 'no-store' });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     mapping = await res.json();
-    noteEnvelopes = mapping.notes.map(() => ({ value: 0, start: 0 }));
+
+    // 「すべてKICKに連動」: role=cluster_trigger かつ name が KICK のエントリを探す。
+    // 見つからない場合は cluster_trigger 全体をKICK扱いにフォールバックする。
+    kickEntryIndices = mapping.notes
+      .map((n, i) => ({ n, i }))
+      .filter(({ n }) => n.role === 'cluster_trigger' && n.name && n.name.toUpperCase() === 'KICK')
+      .map(({ i }) => i);
+    if (kickEntryIndices.length === 0) {
+      kickEntryIndices = mapping.notes
+        .map((n, i) => ({ n, i }))
+        .filter(({ n }) => n.role === 'cluster_trigger')
+        .map(({ i }) => i);
+      if (kickEntryIndices.length > 0) {
+        console.warn('config/midi-mapping.json に name="KICK" のエントリが無いため、cluster_trigger 全体をKICK扱いにします。');
+      }
+    }
+    kickNoteEnvelopes = mapping.notes.map(() => ({ value: 0, start: 0 }));
     buildMeters();
   } catch (err) {
     showToast('config/midi-mapping.json を読み込めませんでした。file:// では動かないので http(s) 経由で開いてください。', 'error');
@@ -77,48 +93,39 @@ async function loadMapping() {
   }
 }
 
-function usedClusters() {
-  const set = new Set();
-  for (const n of mapping.notes) {
-    if (n.role === 'cluster_trigger' && n.cluster != null && n.cluster < MAX_CLUSTERS) set.add(n.cluster);
-  }
-  return [...set].sort((a, b) => a - b);
-}
-
 // ============================================================
-// Cluster envelope meters (UI)
+// Kick envelope meter (UI)
 // ============================================================
 
-const meterFills = new Map();
+let meterFill = null;
+let meterVal = null;
 
 function buildMeters() {
   els.meters.innerHTML = '';
-  const clusters = usedClusters();
-  if (clusters.length === 0) {
+  if (kickEntryIndices.length === 0) {
     els.meters.innerHTML = '<p class="hint">config/midi-mapping.json に cluster_trigger のマッピングがありません。</p>';
+    meterFill = null;
+    meterVal = null;
     return;
   }
-  clusters.forEach((c) => {
-    const row = document.createElement('div');
-    row.className = 'meter-row';
-    const color = `#${CLUSTER_COLORS[c % CLUSTER_COLORS.length].toString(16).padStart(6, '0')}`;
-    row.innerHTML = `
-      <span class="dot" style="background:${color}"></span>
-      <span>c${c}</span>
-      <span class="track"><span class="fill" style="background:${color}"></span></span>
-      <span class="val">0.00</span>
-    `;
-    els.meters.appendChild(row);
-    meterFills.set(c, { fill: row.querySelector('.fill'), val: row.querySelector('.val') });
-  });
+  const color = `#${KICK_COLOR.toString(16).padStart(6, '0')}`;
+  const row = document.createElement('div');
+  row.className = 'meter-row';
+  row.innerHTML = `
+    <span class="dot" style="background:${color}"></span>
+    <span>KICK</span>
+    <span class="track"><span class="fill" style="background:${color}"></span></span>
+    <span class="val">0.00</span>
+  `;
+  els.meters.appendChild(row);
+  meterFill = row.querySelector('.fill');
+  meterVal = row.querySelector('.val');
 }
 
 function updateMeters() {
-  for (const [c, { fill, val }] of meterFills) {
-    const v = midiEnvelopes[c] || 0;
-    fill.style.width = `${Math.min(100, v * 100).toFixed(1)}%`;
-    val.textContent = v.toFixed(2);
-  }
+  if (!meterFill) return;
+  meterFill.style.width = `${Math.min(100, kickEnvelope * 100).toFixed(1)}%`;
+  meterVal.textContent = kickEnvelope.toFixed(2);
 }
 
 // ============================================================
@@ -195,14 +202,14 @@ const bgVertexShader = `
   }
 `;
 
-// maskMap の r/g/b/a は、それぞれ cluster 0/1/2/3 のその画素での重み(0-1)。
+// maskMap の r チャンネルは、その画素が輝度マップに含まれる重み(0-1)。
 // マップが0の場所は写真のまま変化しない。MIDIが無くてもambientの分だけ
-// restLevelを中心に上下し、そこにMIDIのエンベロープが加算される。
+// 0を中心に上下し、そこにKICKのエンベロープが加算される。
 const bgFragmentShader = `
   precision mediump float;
   uniform sampler2D map;
   uniform sampler2D maskMap;
-  uniform float midiEnvelopes[${MAX_CLUSTERS}];
+  uniform float kickEnvelope;
   uniform float ambientAmount;
   uniform float brightGain;
   uniform float time;
@@ -219,7 +226,7 @@ const bgFragmentShader = `
   void main() {
     vec4 tex = texture2D(map, vUv);
     vec3 base = srgbToLinear(tex.rgb);
-    vec4 mask = texture2D(maskMap, vUv);
+    float weight = texture2D(maskMap, vUv).r;
 
     // 位置ごとにバラバラの位相で明滅する「呼吸」のベースライン。
     // -ambientAmount 〜 +ambientAmount を往復する符号付きサイン波なので、
@@ -227,12 +234,8 @@ const bgFragmentShader = `
     float ph = hash21(floor(vUv * 60.0));
     float ambient = ambientAmount * sin(time * (0.4 + 0.25 * ph) + ph * 6.2831);
 
-    // MIDIエンベロープ(0以上、ノートオンで加算)はその上に乗る＝暗くはせず明るさを追加する。
-    float delta =
-        mask.r * (midiEnvelopes[0] + ambient) +
-        mask.g * (midiEnvelopes[1] + ambient) +
-        mask.b * (midiEnvelopes[2] + ambient) +
-        mask.a * (midiEnvelopes[3] + ambient);
+    // KICKのエンベロープ(0以上、ノートオンで加算)はその上に乗る＝暗くはせず明るさを追加する。
+    float delta = weight * (kickEnvelope + ambient);
 
     float factor = clamp(1.0 + brightGain * delta, 0.06, 3.5);
     gl_FragColor = vec4(base * factor, tex.a);
@@ -267,7 +270,7 @@ function setBackground(source, width, height) {
     uniforms: {
       map: { value: texture },
       maskMap: { value: makeEmptyMaskTexture() },
-      midiEnvelopes: { value: new Float32Array(MAX_CLUSTERS) },
+      kickEnvelope: { value: 0 },
       ambientAmount: { value: ambientAmountUniformValue },
       brightGain: { value: brightGainUniformValue },
       time: { value: 0 },
@@ -293,12 +296,12 @@ function applyMaskCanvas(maskCanvas) {
 
 // ============================================================
 // Luminance map extraction (要件定義書 §4 の簡易版・ブラウザ内実装)
-// 深度推定はまだ無い(Phase 2)ため、クラスタ分けは画面上のY座標(下ほど手前)と
-// 面積を使ったヒューリスティックな代用。
+// クラスタ分けはいったん無し。検出した領域はすべて同じ1チャンネルの重みマップに
+// 書き込み、KICKトラックのエンベロープで一律に明滅させる。
 // ============================================================
 
 function extractLuminanceMask(source, naturalW, naturalH, opts) {
-  const { topPercent, minArea, maxDim, maxRegions, clusterCount } = opts;
+  const { topPercent, minArea, maxDim, maxRegions } = opts;
   const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
   const w = Math.max(1, Math.round(naturalW * scale));
   const h = Math.max(1, Math.round(naturalH * scale));
@@ -367,9 +370,8 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
   // Cap to the most prominent blobs (largest area) to stay within a sane budget.
   blobs.sort((a, b) => b.area - a.area);
   const capped = blobs.slice(0, maxRegions);
-  assignClustersByDepthProxy(capped, clusterCount);
 
-  // Paint the mask: one RGBA canvas, one channel per cluster (0=R,1=G,2=B,3=A).
+  // Paint the mask: single-channel weight map (stored in the R channel).
   const maskCanvas = document.createElement('canvas');
   maskCanvas.width = w;
   maskCanvas.height = h;
@@ -377,39 +379,21 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
   const maskData = maskCtx.createImageData(w, h); // transparent black by default
 
   for (const blob of capped) {
-    const ch = Math.min(MAX_CLUSTERS - 1, blob.cluster);
     for (const idx of blob.pixels) {
       const weight = Math.min(1, Math.max(0, (luma[idx] - threshold) / Math.max(1, 255 - threshold)));
-      const di = idx * 4 + ch;
+      const di = idx * 4; // R channel
       const v = Math.round(weight * 255);
       if (v > maskData.data[di]) maskData.data[di] = v;
     }
   }
   maskCtx.putImageData(maskData, 0, 0);
 
-  const exportBlobs = capped.map((b) => ({ x: b.x, y: b.y, color: b.color, cluster: b.cluster, area: b.area }));
+  const exportBlobs = capped.map((b) => ({ x: b.x, y: b.y, color: b.color, area: b.area }));
   return { maskCanvas, regionCount: capped.length, exportBlobs };
 }
 
-function assignClustersByDepthProxy(blobs, clusterCount) {
-  if (blobs.length === 0) return blobs;
-  const maxArea = blobs.reduce((m, b) => Math.max(m, b.area || 1), 1);
-  const scored = blobs.map((b) => {
-    const areaNorm = Math.log(1 + (b.area || 1)) / Math.log(1 + maxArea);
-    // 深度の代わりに「画面下ほど手前」+「面積が大きいほど手前」という前提で並べる。
-    // 実際の深度推定はPhase 2で置き換える。
-    return { b, depthScore: 0.7 * b.y + 0.3 * areaNorm };
-  });
-  scored.sort((a, c) => a.depthScore - c.depthScore); // ascending: low = far, high = near
-  const total = scored.length;
-  scored.forEach((s, i) => {
-    const bucket = Math.min(clusterCount - 1, Math.floor((i / total) * clusterCount));
-    s.b.cluster = clusterCount - 1 - bucket; // cluster 0 = 最前景 (config/midi-mapping.jsonの規約)
-  });
-  return blobs;
-}
-
-// 手作業の points.json (mask-editor/ 製) を、同じRGBAマップ形式に焼き直す。
+// 手作業の points.json (mask-editor/ 製) を、同じ1チャンネルの重みマップに焼き直す。
+// points.jsonのcluster値は今は無視し、全ての点を同じ重みマップに含める。
 function pointsToMaskCanvas(points, naturalW, naturalH, maxDim) {
   const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
   const w = Math.max(1, Math.round(naturalW * scale));
@@ -422,7 +406,6 @@ function pointsToMaskCanvas(points, naturalW, naturalH, maxDim) {
 
   for (const p of points) {
     const cx = p.x * w, cy = p.y * h;
-    const ch = Math.min(MAX_CLUSTERS - 1, Math.max(0, p.cluster || 0));
     const x0 = Math.max(0, Math.floor(cx - radius));
     const x1 = Math.min(w - 1, Math.ceil(cx + radius));
     const y0 = Math.max(0, Math.floor(cy - radius));
@@ -432,7 +415,7 @@ function pointsToMaskCanvas(points, naturalW, naturalH, maxDim) {
         const d = Math.hypot(x - cx, y - cy) / radius;
         if (d > 1) continue;
         const weight = Math.pow(1 - d, 1.5);
-        const idx = (y * w + x) * 4 + ch;
+        const idx = (y * w + x) * 4; // R channel
         const v = Math.round(weight * 255);
         if (v > imgData.data[idx]) imgData.data[idx] = v;
       }
@@ -515,7 +498,6 @@ function currentExtractOptions() {
     topPercent: Number(els.extractTopPercent.value),
     minArea: Number(els.extractMinArea.value),
     maxRegions: Number(els.extractMaxPoints.value),
-    clusterCount: Math.min(MAX_CLUSTERS, Number(els.extractClusterCount.value)),
     maxDim: 700,
   };
 }
@@ -635,10 +617,11 @@ function onMIDIMessage(msg) {
   const now = performance.now() / 1000;
 
   if (type === 0x90 && d2 > 0) {
-    mapping.notes.forEach((n, i) => {
-      if (n.role === 'cluster_trigger' && n.channel === ch && n.note === d1) {
-        noteEnvelopes[i].value = d2 / 127;
-        noteEnvelopes[i].start = now;
+    kickEntryIndices.forEach((i) => {
+      const n = mapping.notes[i];
+      if (n.channel === ch && n.note === d1) {
+        kickNoteEnvelopes[i].value = d2 / 127;
+        kickNoteEnvelopes[i].start = now;
       }
     });
   } else if (type === 0xb0) {
@@ -728,18 +711,18 @@ function tick() {
   requestAnimationFrame(tick);
   const now = performance.now() / 1000;
 
-  midiEnvelopes.fill(0);
-  mapping.notes.forEach((n, i) => {
-    if (n.role !== 'cluster_trigger' || n.cluster == null || n.cluster >= MAX_CLUSTERS) return;
-    const e = noteEnvelopes[i];
+  kickEnvelope = 0;
+  kickEntryIndices.forEach((i) => {
+    const n = mapping.notes[i];
+    const e = kickNoteEnvelopes[i];
     if (e.start === 0) return;
     const v = e.value * Math.exp(-(now - e.start) / (n.tau || 0.15));
-    if (v > midiEnvelopes[n.cluster]) midiEnvelopes[n.cluster] = v;
+    if (v > kickEnvelope) kickEnvelope = v;
   });
   updateMeters();
 
   if (bgMesh) {
-    bgMesh.material.uniforms.midiEnvelopes.value = midiEnvelopes;
+    bgMesh.material.uniforms.kickEnvelope.value = kickEnvelope;
     bgMesh.material.uniforms.time.value = now;
     render();
   }
