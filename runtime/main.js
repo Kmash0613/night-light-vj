@@ -44,6 +44,7 @@ const els = {
   threshold: document.getElementById('threshold'),
   thresholdVal: document.getElementById('threshold-val'),
   ccBloomToggle: document.getElementById('cc-bloom-toggle'),
+  debugKickBtn: document.getElementById('debug-kick-btn'),
   viewport: document.getElementById('viewport'),
   viewportEmpty: document.getElementById('viewport-empty'),
 };
@@ -636,6 +637,15 @@ function setStatus(text, kind) {
   els.statusDot.className = `status-dot ${kind}`;
 }
 
+// Note Onを受けたのと同じ処理。実MIDIからも、下のデバッグボタンからも呼ぶ。
+function triggerKick(velocity) {
+  const now = performance.now() / 1000;
+  kickEntryIndices.forEach((i) => {
+    kickNoteEnvelopes[i].value = velocity / 127;
+    kickNoteEnvelopes[i].start = now;
+  });
+}
+
 function onMIDIMessage(msg) {
   const data = msg.data;
   const status = data[0];
@@ -643,14 +653,13 @@ function onMIDIMessage(msg) {
   const ch = (status & 0x0f) + 1;
   const d1 = data[1];
   const d2 = data[2];
-  const now = performance.now() / 1000;
 
   if (type === 0x90 && d2 > 0) {
     kickEntryIndices.forEach((i) => {
       const n = mapping.notes[i];
       if (n.channel === ch && n.note === d1) {
         kickNoteEnvelopes[i].value = d2 / 127;
-        kickNoteEnvelopes[i].start = now;
+        kickNoteEnvelopes[i].start = performance.now() / 1000;
       }
     });
   } else if (type === 0xb0) {
@@ -707,6 +716,15 @@ function initMIDI() {
 
 els.refresh.addEventListener('click', () => initMIDI());
 els.select.addEventListener('change', () => connectTo(els.select.value));
+
+els.debugKickBtn.addEventListener('click', () => {
+  if (kickEntryIndices.length === 0) {
+    showToast('config/midi-mapping.json にKICK扱いのエントリがありません', 'error');
+    return;
+  }
+  triggerKick(100);
+  showToast('KICKを疑似発火しました（velocity=100）', 'ok');
+});
 
 // ============================================================
 // Slider helpers

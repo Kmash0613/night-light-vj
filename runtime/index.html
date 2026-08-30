@@ -87,6 +87,15 @@
     <div class="section">
       <p class="panel-label">Kick Envelope</p>
       <div id="meters"></div>
+      <div class="row" style="margin-top:10px;">
+        <button id="debug-kick-btn">デバッグ: KICKを疑似発火</button>
+      </div>
+      <p class="hint">
+        実際にNote Onを受信したのと同じ処理を呼ぶ（velocity=100）。SEQTRAKが無くても、
+        MIDI受信側の問題か描画側の問題かを切り分けられる。これを押してメーターだけ動いて
+        画面が変化しなければ描画側、これでも画面が変化するのに実機のKICKで変化しなければ
+        MIDI受信側（config/midi-mapping.jsonのchannel/noteが実機と不一致等）を疑う。
+      </p>
     </div>
 
     <div class="section">
