@@ -15,7 +15,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
 const KICK_COLOR = 0xffb74d;
 const MAX_BLOOM_STRENGTH = 3;
-const OUTPUT_ASPECT = 16 / 9; // 出力フレームは常に16:9固定。写真は歪ませずカバーフィットでクロップする。
+const OUTPUT_ASPECT = 16 / 9; // 出力フレームは常に16:9固定。写真は歪ませずコンテインフィット（黒帯あり、クロップ無し）。
 
 const els = {
   photoInput: document.getElementById('photo-input'),
@@ -221,12 +221,10 @@ function resize() {
   camera.updateProjectionMatrix();
 
   if (bgMesh) {
-    // "cover" fit: ジオメトリは (currentAspect*2, 2)＝写真自身のアスペクト比のまま
-    // （歪みなし）。scale=1で高さがちょうどフラスタムの高さ(2)に一致するので、
-    // 横に長い写真(currentAspect > 16:9)はscale=1のまま左右がフラスタム外に
-    // はみ出してクロップされる。縦長の写真(currentAspect < 16:9)は逆に幅を
-    // フラスタム幅に合わせるまで拡大し、上下がはみ出してクロップされる。
-    const scale = Math.max(OUTPUT_ASPECT / currentAspect, 1);
+    // "contain" fit（CSSのbackground-size:containと同じ）。写真は歪ませず、
+    // 全体が必ず16:9フラスタム内に収まるように縮小するので、クロップは一切
+    // 発生しない。横長の写真は上下に、縦長の写真は左右に黒帯が出る。
+    const scale = Math.min(OUTPUT_ASPECT / currentAspect, 1);
     bgMesh.scale.set(scale, scale, 1);
   }
 }
