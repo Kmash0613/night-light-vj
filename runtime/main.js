@@ -553,6 +553,22 @@ function runExtraction({ silent = false } = {}) {
   if (!silent) showToast(`輝度マップを再生成: 画像の${coveragePercent.toFixed(1)}% (${ms}ms)`, 'ok');
 }
 
+// スマホ写真などEXIFの回転情報を持つJPEGは、<img>のnaturalWidth/naturalHeightは
+// 補正後（見た目通り）の縦横になる一方、そのままWebGLテクスチャのソースに渡すと
+// 補正前の生ピクセル配列がアップロードされてしまうことがあり、その場合
+// 「naturalWidth/Heightから計算したアスペクト比」と「実際にGPUへ送られる画素の
+// アスペクト比」がズレて、写真が変な比率に歪んで見える（横に伸びる等）。
+// <canvas>にdrawImageで焼き直すと、常に見た目通り・補正後の画素で確定するので、
+// このズレが原理的に起こらなくなる。
+function toNormalizedCanvas(img) {
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  return canvas;
+}
+
 els.photoInput.addEventListener('change', () => {
   const file = els.photoInput.files[0];
   if (!file) return;
@@ -560,9 +576,9 @@ els.photoInput.addEventListener('change', () => {
   reader.onload = () => {
     const img = new Image();
     img.onload = () => {
-      loadedImageEl = img;
       loadedImageW = img.naturalWidth;
       loadedImageH = img.naturalHeight;
+      loadedImageEl = toNormalizedCanvas(img);
       els.viewportEmpty.hidden = true;
       setBackground(loadedImageEl, loadedImageW, loadedImageH);
       runExtraction({ silent: true });
