@@ -25,6 +25,10 @@ const els = {
   status: document.getElementById('status'),
   statusDot: document.getElementById('status-dot'),
   meters: document.getElementById('meters'),
+  pointSize: document.getElementById('point-size'),
+  pointSizeVal: document.getElementById('point-size-val'),
+  ambient: document.getElementById('ambient'),
+  ambientVal: document.getElementById('ambient-val'),
   strength: document.getElementById('strength'),
   strengthVal: document.getElementById('strength-val'),
   radius: document.getElementById('radius'),
@@ -116,13 +120,18 @@ function updateMeters() {
 let renderer, camera, scene, bgMesh, pointsObj;
 let bloomComposer, finalComposer, bloomPass;
 let currentAspect = 16 / 9;
+let pointSizeUniformValue = 34;
+let ambientAmountUniformValue = 0.35;
 
 function initRenderer() {
   renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
+  // NoToneMapping: each material's shader (background photo included) already applies
+  // tone mapping in-shader when `toneMapped !== false`; adding a filmic curve here on
+  // top of that (e.g. via OutputPass) double-applies it and flattens/desaturates the
+  // photo. Keep raw output and let UnrealBloomPass supply the glow instead.
+  renderer.toneMapping = THREE.NoToneMapping;
   els.viewport.appendChild(renderer.domElement);
 
   scene = new THREE.Scene();
@@ -133,7 +142,7 @@ function initRenderer() {
 
   const renderScene = new RenderPass(scene, camera);
 
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 1.2, 0.4, 0.1);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 1.6, 0.45, 0.12);
 
   bloomComposer = new EffectComposer(renderer);
   bloomComposer.renderToScreen = false;
@@ -242,28 +251,36 @@ function setBackground(source, width, height) {
   texture.needsUpdate = true;
 
   const geometry = new THREE.PlaneGeometry(currentAspect * 2, 2);
-  const material = new THREE.MeshBasicMaterial({ map: texture, toneMapped: true });
+  const material = new THREE.MeshBasicMaterial({ map: texture });
   bgMesh = new THREE.Mesh(geometry, material);
   bgMesh.position.z = 0;
   scene.add(bgMesh);
   resize();
 }
 
+// 「呼吸する街」: MIDIが鳴っていない間も光点がゼロにならないよう、
+// クラスタごとのMIDIエンベロープに、点ごとに位相をずらしたゆっくりした
+// アンビエントの明滅を加算する。MIDIノートはその上に重なる形で明るく光る。
 const pointVertexShader = `
   attribute float cluster;
   attribute vec3 pointColor;
+  attribute float phase;
   uniform float envelopes[${MAX_CLUSTERS}];
   uniform float basePointSize;
   uniform float pixelRatio;
+  uniform float time;
+  uniform float ambientAmount;
   varying vec3 vColor;
   varying float vEnv;
   void main() {
     int idx = int(cluster);
-    float env = envelopes[idx];
+    float midiEnv = envelopes[idx];
+    float ambient = ambientAmount * (0.5 + 0.5 * sin(time * (0.5 + 0.15 * sin(phase)) + phase * 6.2831));
+    float env = clamp(midiEnv + ambient, 0.0, 1.5);
     vEnv = env;
     vColor = pointColor;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = basePointSize * pixelRatio * (0.35 + 0.9 * env);
+    gl_PointSize = basePointSize * pixelRatio * (0.5 + 0.9 * env);
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
@@ -274,10 +291,14 @@ const pointFragmentShader = `
   varying float vEnv;
   void main() {
     vec2 uv = gl_PointCoord - vec2(0.5);
-    float d = length(uv);
-    float alpha = smoothstep(0.5, 0.0, d) * vEnv;
+    float d = length(uv) * 2.0; // 0 at center, 1 at edge
+    float halo = pow(max(0.0, 1.0 - d), 2.2);
+    float core = pow(max(0.0, 1.0 - d * 1.6), 6.0);
+    float shape = halo * 0.6 + core;
+    float alpha = shape * vEnv;
     if (alpha < 0.004) discard;
-    gl_FragColor = vec4(vColor * (0.6 + 1.6 * vEnv), alpha);
+    vec3 hot = mix(vColor, vec3(1.0), core * 0.6); // bright core flashes toward white-hot
+    gl_FragColor = vec4(hot * (0.7 + 1.8 * vEnv), alpha);
   }
 `;
 
@@ -291,6 +312,7 @@ function setPoints(points) {
   const positions = new Float32Array(n * 3);
   const colors = new Float32Array(n * 3);
   const clusters = new Float32Array(n);
+  const phases = new Float32Array(n);
 
   points.forEach((p, i) => {
     positions[i * 3 + 0] = (p.x - 0.5) * currentAspect * 2;
@@ -301,18 +323,22 @@ function setPoints(points) {
     colors[i * 3 + 1] = c[1] / 255;
     colors[i * 3 + 2] = c[2] / 255;
     clusters[i] = Math.min(MAX_CLUSTERS - 1, Math.max(0, p.cluster || 0));
+    phases[i] = Math.random(); // 0-1, used as a per-point phase offset for ambient breathing
   });
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute('pointColor', new THREE.BufferAttribute(colors, 3));
   geometry.setAttribute('cluster', new THREE.BufferAttribute(clusters, 1));
+  geometry.setAttribute('phase', new THREE.BufferAttribute(phases, 1));
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
       envelopes: { value: new Float32Array(MAX_CLUSTERS) },
-      basePointSize: { value: 26 },
+      basePointSize: { value: pointSizeUniformValue },
       pixelRatio: { value: Math.min(window.devicePixelRatio, 2) },
+      time: { value: 0 },
+      ambientAmount: { value: ambientAmountUniformValue },
     },
     vertexShader: pointVertexShader,
     fragmentShader: pointFragmentShader,
@@ -541,6 +567,7 @@ els.select.addEventListener('change', () => connectTo(els.select.value));
 function wireSlider(input, label, apply, initial) {
   input.value = initial;
   label.textContent = Number(initial).toFixed(2);
+  apply(Number(initial));
   input.addEventListener('input', () => {
     const v = Number(input.value);
     label.textContent = v.toFixed(2);
@@ -568,6 +595,7 @@ function tick() {
 
   if (pointsObj) {
     pointsObj.material.uniforms.envelopes.value = clusterEnvelopes;
+    pointsObj.material.uniforms.time.value = now;
   }
 
   if (renderer && bgMesh) {
@@ -580,9 +608,17 @@ function tick() {
 // ============================================================
 
 initRenderer();
-wireSlider(els.strength, els.strengthVal, (v) => { bloomPass.strength = v; }, 1.2);
-wireSlider(els.radius, els.radiusVal, (v) => { bloomPass.radius = v; }, 0.4);
-wireSlider(els.threshold, els.thresholdVal, (v) => { bloomPass.threshold = v; }, 0.1);
+wireSlider(els.pointSize, els.pointSizeVal, (v) => {
+  pointSizeUniformValue = v;
+  if (pointsObj) pointsObj.material.uniforms.basePointSize.value = v;
+}, 34);
+wireSlider(els.ambient, els.ambientVal, (v) => {
+  ambientAmountUniformValue = v;
+  if (pointsObj) pointsObj.material.uniforms.ambientAmount.value = v;
+}, 0.35);
+wireSlider(els.strength, els.strengthVal, (v) => { bloomPass.strength = v; }, 1.6);
+wireSlider(els.radius, els.radiusVal, (v) => { bloomPass.radius = v; }, 0.45);
+wireSlider(els.threshold, els.thresholdVal, (v) => { bloomPass.threshold = v; }, 0.12);
 loadMapping();
 initMIDI();
 tick();

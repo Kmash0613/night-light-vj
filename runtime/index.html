@@ -62,18 +62,34 @@
     </div>
 
     <div class="section">
+      <p class="panel-label">Light Points</p>
+      <div class="slider-row">
+        <span class="label-line"><span>size</span><span id="point-size-val">34</span></span>
+        <input type="range" id="point-size" min="6" max="80" step="1" value="34">
+      </div>
+      <div class="slider-row">
+        <span class="label-line"><span>ambient breathing</span><span id="ambient-val">0.35</span></span>
+        <input type="range" id="ambient" min="0" max="1" step="0.01" value="0.35">
+      </div>
+      <p class="hint">
+        MIDIが鳴っていない間も、街が微かに息をするように光点を明滅させる量。
+        「呼吸する街」の土台（要件定義書 §1）。0にするとMIDIノートでのみ光る。
+      </p>
+    </div>
+
+    <div class="section">
       <p class="panel-label">Bloom（光点レイヤーのみ対象）</p>
       <div class="slider-row">
-        <span class="label-line"><span>strength</span><span id="strength-val">1.20</span></span>
-        <input type="range" id="strength" min="0" max="3" step="0.01" value="1.2">
+        <span class="label-line"><span>strength</span><span id="strength-val">1.60</span></span>
+        <input type="range" id="strength" min="0" max="3" step="0.01" value="1.6">
       </div>
       <div class="slider-row">
-        <span class="label-line"><span>radius</span><span id="radius-val">0.40</span></span>
-        <input type="range" id="radius" min="0" max="1" step="0.01" value="0.4">
+        <span class="label-line"><span>radius</span><span id="radius-val">0.45</span></span>
+        <input type="range" id="radius" min="0" max="1" step="0.01" value="0.45">
       </div>
       <div class="slider-row">
-        <span class="label-line"><span>threshold</span><span id="threshold-val">0.10</span></span>
-        <input type="range" id="threshold" min="0" max="1" step="0.01" value="0.1">
+        <span class="label-line"><span>threshold</span><span id="threshold-val">0.12</span></span>
+        <input type="range" id="threshold" min="0" max="1" step="0.01" value="0.12">
       </div>
       <label class="checkbox">
         <input type="checkbox" id="cc-bloom-toggle" checked>

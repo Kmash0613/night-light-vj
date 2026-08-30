@@ -14,6 +14,12 @@
 - 写真・光点データは `<input type="file">` でローカル読み込みし、どこにも送信しない
 - 明滅エンベロープ: `env = velocity/127 * exp(-t/tau)`。クラスタは複数トラックが乗る場合、
   各トラックのエンベロープの最大値をそのクラスタの値として採用する
+- MIDIが鳴っていない間もゼロにはならず、点ごとに位相をずらしたアンビエントな明滅
+  （「呼吸する街」§1）をベースに乗せ、MIDIがその上に加算される。「Light Points」パネルの
+  `ambient breathing` スライダーで量を調整（0でMIDIのみの明滅に戻る）
+- `renderer.toneMapping` は `NoToneMapping`。背景写真のマテリアルは `toneMapped` が
+  デフォルトtrueのため、ここにフィルミックトーンマッピングをかけると `OutputPass` の
+  カラーマネジメントと二重適用され彩度・コントラストが落ちるので使わない
 
 未実装（Phase 2以降）: 深度ディスプレイスメント、カメラ移動、DOF、カラーグレーディング、
 `camera_kick` / `hue_shift` / `bloom_spike` / `scene_cut` ロールの反映。
