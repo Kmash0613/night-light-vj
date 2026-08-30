@@ -6,7 +6,7 @@
 <title>Night Light VJ — Phase 1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="style.css?v=14">
 <script type="importmap">
 {
   "imports": {
@@ -43,8 +43,8 @@
     <div class="section">
       <p class="panel-label">Auto Extract（輝度マップの自動生成）</p>
       <div class="slider-row">
-        <span class="label-line"><span>top %（明るい上位何%をマップに含めるか）</span><span id="extract-top-percent-val">8.0</span></span>
-        <input type="range" id="extract-top-percent" min="0.5" max="50" step="0.5" value="8">
+        <span class="label-line"><span>top %（明るい上位何%をマップに含めるか）</span><span id="extract-top-percent-val">15.0</span></span>
+        <input type="range" id="extract-top-percent" min="0.5" max="50" step="0.5" value="15">
       </div>
       <div class="row">
         <button id="extract-btn">再抽出</button>
@@ -97,15 +97,11 @@
         <span class="label-line"><span>bright gain（明滅の強さ）</span><span id="bright-gain-val">1.20</span></span>
         <input type="range" id="bright-gain" min="0" max="3" step="0.01" value="1.2">
       </div>
-      <div class="slider-row">
-        <span class="label-line"><span>ambient breathing</span><span id="ambient-val">0.35</span></span>
-        <input type="range" id="ambient" min="0" max="1" step="0.01" value="0.35">
-      </div>
       <p class="hint">
-        輝度マップの値が乗っている場所だけ、MIDIノートに応じて元の写真の明るさを上下させる
-        （マップが0の場所は写真のまま変化しない）。<code>ambient breathing</code> は
-        MIDIが鳴っていない間の基準レベルで、そこを中心に明るく/暗く振れる
-        （「呼吸する街」§1）。0にするとMIDIノートが無いときは写真のまま静止する。
+        輝度マップの値が乗っている場所だけ、MIDIノートに応じて元の写真の明るさを上げる
+        （マップが0の場所は写真のまま変化しない）。ambient breathing（MIDIが無い間の
+        自動揺らぎ）は検証を単純化するためいったんオミットしており、今はKICKの
+        Note Onが来たときだけ明るくなる最小構成になっている。
       </p>
     </div>
 
@@ -151,6 +147,6 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="main.js?v=12"></script>
+<script type="module" src="main.js?v=14"></script>
 </body>
 </html>

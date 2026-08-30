@@ -61,12 +61,12 @@ Web MIDI API はローカルにファイルを置くか、通常のWebサーバ�
 1. **公開URL の `runtime/` を開く**
    - 左パネルで夜景写真を読み込む（写真がまだ無ければ「サンプルを読み込む」でも可）
    - 読み込むと同時に、写真の輝度が高い場所（ネオン等）から「輝度マップ」を自動生成する
-     （「Auto Extract」パネル）。`top %` / `min area` / `max regions` を変えて「再抽出」で調整できる
+     （「Auto Extract」パネル）。`top %` を変えて「再抽出」で調整できる
    - SEQTRAKでKICK（`config/midi-mapping.json` の `name: "KICK"`）を鳴らすと、
-     マップ上の場所が一律に指数減衰（`tau`）で明るさが上下する
+     マップ上の場所が一律に指数減衰（`tau`）で明るさが上がる
    - 「Kick Envelope」のメーターでMIDIエンベロープを確認できる
-   - 「Brightness」の `ambient breathing` で、MIDIが鳴っていない間の明滅（呼吸）の強さを、
-     `bright gain` で明滅全体の強さを調整する
+   - 「Brightness」の `bright gain` で明滅全体の強さを調整する
+     （ambient breathing＝MIDIが無い間の自動揺らぎは、検証を単純化するためいったんオミット中）
    - 「Bloom」のスライダーで、明るくなった場所が光る度合いを調整する（SEQTRAKのFX LEVELノブでも
      `strength` を操作できる — チェックボックスでON/OFF切り替え）
 2. **手動で光点を配置したい場合は `mask-editor/` を使う**（任意）

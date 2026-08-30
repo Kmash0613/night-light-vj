@@ -31,8 +31,6 @@ const els = {
   exportPointsBtn: document.getElementById('export-points-btn'),
   brightGain: document.getElementById('bright-gain'),
   brightGainVal: document.getElementById('bright-gain-val'),
-  ambient: document.getElementById('ambient'),
-  ambientVal: document.getElementById('ambient-val'),
   strength: document.getElementById('strength'),
   strengthVal: document.getElementById('strength-val'),
   radius: document.getElementById('radius'),
@@ -134,7 +132,6 @@ let renderer, camera, scene, bgMesh;
 let composer, bloomPass;
 let currentAspect = 16 / 9;
 let brightGainUniformValue = 1.2;
-let ambientAmountUniformValue = 0.35;
 
 function initRenderer() {
   renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -201,39 +198,27 @@ const bgVertexShader = `
 `;
 
 // maskMap の r チャンネルは、その画素が輝度マップに含まれる重み(0-1)。
-// マップが0の場所は写真のまま変化しない。MIDIが無くてもambientの分だけ
-// 0を中心に上下し、そこにKICKのエンベロープが加算される。
+// マップが0の場所は写真のまま変化しない。
+// ambient breathing（MIDIが無い間の自動揺らぎ）は検証を単純化するためいったん
+// オミットしている。今はKICKのNote On（kickEnvelope）だけが明るさを動かす、
+// もっともプリミティブな構成。
 const bgFragmentShader = `
   precision mediump float;
   uniform sampler2D map;
   uniform sampler2D maskMap;
   uniform float kickEnvelope;
-  uniform float ambientAmount;
   uniform float brightGain;
-  uniform float time;
   varying vec2 vUv;
 
   vec3 srgbToLinear(vec3 c) { return pow(max(c, 0.0), vec3(2.2)); }
-
-  float hash21(vec2 p) {
-    p = fract(p * vec2(123.34, 456.21));
-    p += dot(p, p + 45.32);
-    return fract(p.x * p.y);
-  }
 
   void main() {
     vec4 tex = texture2D(map, vUv);
     vec3 base = srgbToLinear(tex.rgb);
     float weight = texture2D(maskMap, vUv).r;
 
-    // 位置ごとにバラバラの位相で明滅する「呼吸」のベースライン。
-    // -ambientAmount 〜 +ambientAmount を往復する符号付きサイン波なので、
-    // MIDIが無い間も明るくなる方向・暗くなる方向の両方にはっきり振れる。
-    float ph = hash21(floor(vUv * 60.0));
-    float ambient = ambientAmount * sin(time * (0.4 + 0.25 * ph) + ph * 6.2831);
-
-    // KICKのエンベロープ(0以上、ノートオンで加算)はその上に乗る＝暗くはせず明るさを追加する。
-    float delta = weight * (kickEnvelope + ambient);
+    // KICKのエンベロープ(0以上、ノートオンで立ち上がる)分だけ明るさを追加する。
+    float delta = weight * kickEnvelope;
 
     float factor = clamp(1.0 + brightGain * delta, 0.06, 3.5);
     gl_FragColor = vec4(base * factor, tex.a);
@@ -269,9 +254,7 @@ function setBackground(source, width, height) {
       map: { value: texture },
       maskMap: { value: makeEmptyMaskTexture() },
       kickEnvelope: { value: 0 },
-      ambientAmount: { value: ambientAmountUniformValue },
       brightGain: { value: brightGainUniformValue },
-      time: { value: 0 },
     },
     vertexShader: bgVertexShader,
     fragmentShader: bgFragmentShader,
@@ -323,8 +306,15 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
   for (let i = 0; i < n; i++) {
     const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
     const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    luma[i] = l;
-    hist[Math.round(l)] += 1;
+    // hist[] は丸めた輝度でバケット化するので、以降の閾値判定もこの丸めた値と
+    // 揃えないと「ヒストグラム上はtargetCountを満たすはずが、実際にフィルタすると
+    // 大幅に少ない画素しか残らない」というズレが起きる（単色に近い塗りつぶし領域の
+    // 輝度が33.7のような閾値未満の小数だと、丸めてhist[34]に入って集計上はカウント
+    // されるのに、生の値では34未満として弾かれてしまう）。luma[]自体を丸めた整数
+    // として保持し、両方の判定を完全に一致させる。
+    const lr = Math.round(l);
+    luma[i] = lr;
+    hist[lr] += 1;
   }
 
   // Percentile threshold: brightest `topPercent`% of pixels.
@@ -342,7 +332,12 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
   maskCanvas.width = w;
   maskCanvas.height = h;
   const maskCtx = maskCanvas.getContext('2d');
-  const maskData = maskCtx.createImageData(w, h); // transparent black by default
+  const maskData = maskCtx.createImageData(w, h);
+  // アルファを0のままにすると、ブラウザのcanvas内部表現（premultiplied alpha）が
+  // putImageData/getImageDataの往復やWebGLへのアップロード時にRGBを0に潰してしまう
+  // （alpha=0の画素は色情報が無いものとして扱われるため）。ここではRチャンネルが
+  // 実データなので、全画素のアルファを255（不透明）にしてこれを防ぐ。
+  for (let i = 3; i < maskData.data.length; i += 4) maskData.data[i] = 255;
 
   let qualifying = 0;
   for (let i = 0; i < n; i++) {
@@ -369,6 +364,9 @@ function pointsToMaskCanvas(points, naturalW, naturalH, maxDim) {
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
   const imgData = ctx.createImageData(w, h);
+  // extractLuminanceMask と同じ理由で、アルファを全画素255にしてRチャンネルの
+  // 重みがブラウザのpremultiplied alpha往復で消えないようにする。
+  for (let i = 3; i < imgData.data.length; i += 4) imgData.data[i] = 255;
   const radius = Math.max(3, Math.round(Math.min(w, h) * 0.025));
 
   for (const p of points) {
@@ -727,7 +725,6 @@ function tick() {
 
   if (bgMesh) {
     bgMesh.material.uniforms.kickEnvelope.value = kickEnvelope;
-    bgMesh.material.uniforms.time.value = now;
     render();
   }
 }
@@ -742,10 +739,6 @@ wireSlider(els.brightGain, els.brightGainVal, (v) => {
   brightGainUniformValue = v;
   if (bgMesh) bgMesh.material.uniforms.brightGain.value = v;
 }, 1.2);
-wireSlider(els.ambient, els.ambientVal, (v) => {
-  ambientAmountUniformValue = v;
-  if (bgMesh) bgMesh.material.uniforms.ambientAmount.value = v;
-}, 0.35);
 wireSlider(els.strength, els.strengthVal, (v) => { bloomPass.strength = v; }, 1.6);
 wireSlider(els.radius, els.radiusVal, (v) => { bloomPass.radius = v; }, 0.45);
 wireSlider(els.threshold, els.thresholdVal, (v) => { bloomPass.threshold = v; }, 0.55);

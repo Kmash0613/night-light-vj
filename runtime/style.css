@@ -178,6 +178,11 @@ input[type="file"] { font-size: 0.74rem; color: var(--text-dim); max-width: 100%
   line-height: 1.8;
   padding: 20px;
 }
+/* .viewport-empty と [hidden] は同じ詳細度なので、後に定義された方が勝ってしまい
+   el.hidden = true だけでは実際に隠れない。ここで明示的に上書きする。 */
+.viewport-empty[hidden] {
+  display: none;
+}
 .viewport-empty code {
   background: var(--panel-raised); border: 1px solid var(--border);
   padding: 0 5px; border-radius: 3px; font-family: var(--font-mono); color: var(--text-dim);
