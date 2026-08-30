@@ -1,5 +1,5 @@
 // Phase 1: 光点明滅の最小構成（輝度マップ方式）
-// 写真1枚 + カメラ固定。個別の光点（パーティクル）は打たず、写真の輝度が高い場所を
+// 写真1枚。個別の光点（パーティクル）は打たず、写真の輝度が高い場所を
 // 検出して「輝度マップ」（重み4チャンネル＝クラスタ分）を作り、各クラスタに紐づく
 // トラックのNote Onに応じて、そのクラスタの重みが乗っている場所だけ、元の写真の
 // 明るさを上げ下げする。ブルームは通常のUnrealBloomPass。要件定義書 §5, §9 Phase 1 に対応。
@@ -8,6 +8,15 @@
 // 明滅の土台（輝度マップ生成・MIDI連動・16:9出力）が安定して確認できたので復活させた。
 // 塊（連結成分）検出は使わず、画素ごとの輝度で重みを決める設計は維持したまま、
 // クラスタの割り当てだけを画素のY位置（画面下ほど手前＝cluster0）で振り分けている。
+//
+// Phase 2: 深度による3D化（実験的、要件定義書 §5, §9 Phase 2 に対応）
+// 本物の深度推定モデルはこのブラウザ環境には無いため、画素のY位置＋輝度から作る
+// 「疑似深度マップ」（generatePseudoDepthGrid()）でひとまず代用している。背景メッシュを
+// 細分化したジオメトリにして、疑似深度ぶんだけ頂点Zをずらし（ディスプレイスメント）、
+// カメラはPerspectiveCameraにしてZ方向にゆっくり呼吸させる（dolly_in、tick()内）。
+// 疑似深度は generatePseudoDepthGrid() 単体に閉じているので、将来Depth Anything V2等の
+// 本物の深度マップ（batch/の出力やPNGの手動読み込み）に差し替える際もその関数の中身だけ
+// 変えればよい設計にしてある。
 
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -50,6 +59,13 @@ const els = {
   ccBloomToggle: document.getElementById('cc-bloom-toggle'),
   monoAmount: document.getElementById('mono-amount'),
   monoAmountVal: document.getElementById('mono-amount-val'),
+  depth3dToggle: document.getElementById('depth3d-toggle'),
+  depthStrength: document.getElementById('depth-strength'),
+  depthStrengthVal: document.getElementById('depth-strength-val'),
+  dollyAmplitude: document.getElementById('dolly-amplitude'),
+  dollyAmplitudeVal: document.getElementById('dolly-amplitude-val'),
+  dollyPeriod: document.getElementById('dolly-period'),
+  dollyPeriodVal: document.getElementById('dolly-period-val'),
   debugKickBtn: document.getElementById('debug-kick-btn'),
   viewport: document.getElementById('viewport'),
   viewportEmpty: document.getElementById('viewport-empty'),
@@ -163,6 +179,18 @@ let currentAspect = 16 / 9;
 let brightGainUniformValue = 1.2;
 let baseLevelUniformValue = 0;
 
+// Phase 2: 深度3D（実験的）。カメラは常にPerspectiveCameraだが、depth3dEnabled=false
+// （かつ depthStrengthValue=0 相当）なら疑似深度ディスプレイスメント・ドリー移動の
+// どちらも効かせず、メッシュは平面のまま静止する（Phase 1と見た目上ほぼ同じになる
+// ようFOVを合わせてある。下のBASE_CAMERA_Z/FOV算出のコメント参照）。
+const BASE_CAMERA_Z = 5;
+let depth3dEnabled = true;
+let depthStrengthValue = 0.6; // 疑似深度をどれだけ頂点Zに反映するか（ワールド単位）
+let dollyAmplitudeValue = 0.3; // カメラZの呼吸振幅（ワールド単位）
+let dollyPeriodValue = 8; // 呼吸1周期の秒数（要件定義書のマクロ8小節に相当する仮の時間軸。MIDI Clock同期は未実装）
+let bgWidthSegments = 1, bgHeightSegments = 1;
+let bgDepthValues = null; // Float32Array。頂点ごとの疑似深度(0=手前, 1=奥)。写真読み込み時のみ再計算する
+
 // モノクロ化ポストエフェクト。OutputPass の後（＝表示直前の最終色）に掛けるので、
 // bloomの輝度判定などは通常通りカラーのまま行われ、見た目だけが最後にグレースケール化される。
 // amount=0で通常のカラー、1で完全なモノクロ。中間値で部分的な彩度落としもできる。
@@ -202,8 +230,13 @@ function initRenderer() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
 
-  camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10);
-  camera.position.z = 5;
+  // 旧Phase1のOrthographicCamera（フラスタム±OUTPUT_ASPECT×±1、z=5から見る）と
+  // 静止時（ドリーオフセット0・ディスプレイスメント0）にまったく同じ画角になるよう、
+  // 縦半分の高さ1・距離BASE_CAMERA_ZからFOVを逆算する。depth3dEnabled=falseのときは
+  // これと同じ状態になるので、Phase 1の見た目は保たれる。
+  const fovDeg = 2 * Math.atan(1 / BASE_CAMERA_Z) * (180 / Math.PI);
+  camera = new THREE.PerspectiveCamera(fovDeg, OUTPUT_ASPECT, 0.1, 20);
+  camera.position.z = BASE_CAMERA_Z;
 
   bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 1.6, 0.45, 0.55);
   monoPass = new ShaderPass(monoShader);
@@ -236,12 +269,9 @@ function resize() {
   renderer.setSize(w, h);
   composer.setSize(w, h);
 
-  // カメラのフラスタムは常に16:9固定（写真側のアスペクト比には依存しない）。
-  camera.left = -OUTPUT_ASPECT;
-  camera.right = OUTPUT_ASPECT;
-  camera.top = 1;
-  camera.bottom = -1;
-  camera.updateProjectionMatrix();
+  // カメラのFOV/アスペクトは常に16:9固定の定数（initRendererで設定済み）で、
+  // 写真側のアスペクト比にもコンテナの実際の形にも依存しない。ここでは
+  // レンダラー/コンポーザーの物理サイズだけを16:9矩形に合わせる。
 
   if (bgMesh) {
     // "contain" fit（CSSのbackground-size:containと同じ）。写真は歪ませず、
@@ -339,7 +369,9 @@ function setBackground(source, width, height) {
 
   // ジオメトリは写真自身のアスペクト比のまま（歪みなし）。16:9出力フレームへの
   // コンテインフィット（黒帯・クロップ無し）は resize() 側で bgMesh.scale を掛けて行う。
-  const geometry = new THREE.PlaneGeometry(currentAspect * 2, 2);
+  // Phase 2のディスプレイスメント用に細分化する（segments=1だと頂点Zをずらせない）。
+  ({ widthSegments: bgWidthSegments, heightSegments: bgHeightSegments } = computeDepthGridSegments(currentAspect));
+  const geometry = new THREE.PlaneGeometry(currentAspect * 2, 2, bgWidthSegments, bgHeightSegments);
   const material = new THREE.ShaderMaterial({
     uniforms: {
       map: { value: texture },
@@ -355,6 +387,7 @@ function setBackground(source, width, height) {
   bgMesh.position.z = 0;
   scene.add(bgMesh);
   resize();
+  regeneratePseudoDepth(source);
 }
 
 function applyMaskData(data, w, h) {
@@ -362,6 +395,79 @@ function applyMaskData(data, w, h) {
   const tex = makeMaskTexture(data, w, h);
   bgMesh.material.uniforms.maskMap.value?.dispose();
   bgMesh.material.uniforms.maskMap.value = tex;
+}
+
+// ============================================================
+// Phase 2: 疑似深度によるディスプレイスメント（実験的）
+//
+// 本物の深度推定（Depth Anything V2 等、要件定義書 §4）はこのブラウザ環境には無いため、
+// ひとまず「画面のY位置＋輝度」から疑似的な深度勾配を作って代用している。
+// - Y位置が主: 画面下ほど手前（depth小）、上ほど奥（depth大）。輝度マップのクラスタ
+//   割り当て（extractLuminanceMask）と同じ向きの簡易的な「奥行きの代用」。
+// - 輝度は従: 明るい画素（ネオン等）はわずかに手前へ引く（depthを少し減らす）。
+// generatePseudoDepthGrid() の中身だけを本物の深度マップ（batch/の出力や手動読み込みの
+// 16bit PNG）に差し替えれば、以降のジオメトリ・カメラ側は無改造で使えるように分離している。
+// ============================================================
+
+// ディスプレイスメント用メッシュの分割数。写真のアスペクト比に合わせて縦分割数を決める
+// （横分割数は固定）。細かすぎると頂点コストが無駄に増えるので、荒いグリッドに留める。
+const DEPTH_GRID_WIDTH_SEGMENTS = 48;
+
+function computeDepthGridSegments(aspect) {
+  const widthSegments = DEPTH_GRID_WIDTH_SEGMENTS;
+  const heightSegments = Math.max(12, Math.min(64, Math.round(widthSegments / aspect)));
+  return { widthSegments, heightSegments };
+}
+
+// 頂点グリッド（(widthSegments+1) × (heightSegments+1)）と同じ解像度まで写真を縮小して
+// サンプリングし、各頂点に対応する疑似深度(0=手前 〜 1=奥)を1個ずつ求める。
+// THREE.PlaneGeometryの頂点順序（iy=0が上端、各行はixが0→widthSegmentsの順）に
+// 合わせてあるので、返した配列はそのまま position.setZ(i, ...) の添字で使える。
+function generatePseudoDepthGrid(source, widthSegments, heightSegments) {
+  const gw = widthSegments + 1;
+  const gh = heightSegments + 1;
+  const canvas = document.createElement('canvas');
+  canvas.width = gw;
+  canvas.height = gh;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(source, 0, 0, gw, gh);
+  const { data } = ctx.getImageData(0, 0, gw, gh);
+
+  const values = new Float32Array(gw * gh);
+  for (let iy = 0; iy < gh; iy++) {
+    const fromBottom = 1 - iy / heightSegments; // 0(下端)〜1(上端)。extractLuminanceMaskのfromBottomと同じ向き
+    for (let ix = 0; ix < gw; ix++) {
+      const i = iy * gw + ix;
+      const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
+      const luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      // 奥行きの主成分はY位置そのもの（上ほど奥＝depth大）。輝度は従成分として、明るい画素を
+      // 少しだけ手前に引く（ネオン等が浮き上がって見えるように、depthを少し減らす）。
+      let d = fromBottom - luma * 0.25;
+      values[i] = Math.min(1, Math.max(0, d));
+    }
+  }
+  return values;
+}
+
+// 写真読み込み時にのみ呼ぶ（重いサンプリングを含むため）。depth-strengthスライダーや
+// 3Dトグルの変更では再サンプリングせず、reapplyDepthStrength() が既存の値を使い回す。
+function regeneratePseudoDepth(source) {
+  if (!bgMesh) return;
+  bgDepthValues = generatePseudoDepthGrid(source, bgWidthSegments, bgHeightSegments);
+  reapplyDepthStrength();
+}
+
+// bgDepthValues（0=手前〜1=奥）を現在の実効ストレングスでジオメトリの頂点Zに反映する。
+// カメラはZ+側を向いて原点方向を見ているので、奥に押すほどZを負方向にずらす。
+// depth3dEnabled=falseのときは実効ストレングス0＝メッシュは完全に平面（Phase 1と同じ）。
+function reapplyDepthStrength() {
+  if (!bgMesh || !bgDepthValues) return;
+  const strength = depth3dEnabled ? depthStrengthValue : 0;
+  const pos = bgMesh.geometry.attributes.position;
+  for (let i = 0; i < bgDepthValues.length; i++) {
+    pos.setZ(i, -bgDepthValues[i] * strength);
+  }
+  pos.needsUpdate = true;
 }
 
 // ============================================================
@@ -830,6 +936,13 @@ function tick() {
   }
   updateMeters();
 
+  // Phase 2: dolly_in（カメラZの呼吸）。MIDI Clockへの位相同期は未実装のため、
+  // 単純な時間ベースのサイン波。振幅・周期はサイドバーのスライダーで調整できる
+  // （振幅を上げすぎると疑似深度の粗さ・破綻が見えやすくなるので小さめが基本）。
+  camera.position.z = depth3dEnabled
+    ? BASE_CAMERA_Z + Math.sin((2 * Math.PI * now) / dollyPeriodValue) * dollyAmplitudeValue
+    : BASE_CAMERA_Z;
+
   if (bgMesh) {
     bgMesh.material.uniforms.clusterEnvelope.value.set(
       clusterEnvelope[0], clusterEnvelope[1], clusterEnvelope[2], clusterEnvelope[3]
@@ -856,6 +969,17 @@ wireSlider(els.strength, els.strengthVal, (v) => { bloomPass.strength = v; }, 1.
 wireSlider(els.radius, els.radiusVal, (v) => { bloomPass.radius = v; }, 0.45);
 wireSlider(els.threshold, els.thresholdVal, (v) => { bloomPass.threshold = v; }, 0.55);
 wireSlider(els.monoAmount, els.monoAmountVal, (v) => { monoPass.uniforms.amount.value = v; }, 0);
+els.depth3dToggle.checked = depth3dEnabled;
+els.depth3dToggle.addEventListener('change', () => {
+  depth3dEnabled = els.depth3dToggle.checked;
+  reapplyDepthStrength();
+});
+wireSlider(els.depthStrength, els.depthStrengthVal, (v) => {
+  depthStrengthValue = v;
+  reapplyDepthStrength();
+}, 0.6);
+wireSlider(els.dollyAmplitude, els.dollyAmplitudeVal, (v) => { dollyAmplitudeValue = v; }, 0.3);
+wireSlider(els.dollyPeriod, els.dollyPeriodVal, (v) => { dollyPeriodValue = v; }, 8);
 loadMapping();
 initMIDI();
 tick();

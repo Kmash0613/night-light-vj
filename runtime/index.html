@@ -23,7 +23,7 @@
       <h1>Night Light VJ</h1>
       <span class="phase-tag">Phase 1</span>
     </div>
-    <p class="sub">写真の輝度マップに応じて、写真そのものの明るさをMIDIトラックに連動させて上げ下げする。個別の光点は打たず、検出した場所を4クラスタに振り分けてトラックごとに明滅させる。カメラは固定。</p>
+    <p class="sub">写真の輝度マップに応じて、写真そのものの明るさをMIDIトラックに連動させて上げ下げする。個別の光点は打たず、検出した場所を4クラスタに振り分けてトラックごとに明滅させる。疑似深度によるディスプレイスメントとカメラの呼吸移動あり（Phase 2、実験的）。</p>
 
     <div class="section">
       <p class="panel-label">Scene</p>
@@ -139,6 +139,36 @@
     </div>
 
     <div class="section">
+      <p class="panel-label">Depth 3D（Phase 2・実験的）</p>
+      <label class="checkbox">
+        <input type="checkbox" id="depth3d-toggle" checked>
+        疑似深度ディスプレイスメント＋カメラの呼吸移動を有効にする
+      </label>
+      <div class="slider-row">
+        <span class="label-line"><span>depth strength（ディスプレイスメントの強さ）</span><span id="depth-strength-val">0.60</span></span>
+        <input type="range" id="depth-strength" min="0" max="1.5" step="0.01" value="0.6">
+      </div>
+      <div class="slider-row">
+        <span class="label-line"><span>dolly amplitude（カメラの振幅）</span><span id="dolly-amplitude-val">0.30</span></span>
+        <input type="range" id="dolly-amplitude" min="0" max="1" step="0.01" value="0.3">
+      </div>
+      <div class="slider-row">
+        <span class="label-line"><span>dolly period（呼吸の周期・秒）</span><span id="dolly-period-val">8.00</span></span>
+        <input type="range" id="dolly-period" min="2" max="20" step="0.5" value="8">
+      </div>
+      <p class="hint">
+        本物の深度推定モデルはこの環境には無いため、画面のY位置（下ほど手前）と輝度
+        （明るい場所はわずかに手前）から作る簡易的な「疑似深度マップ」で代用している。
+        背景メッシュを細分化し、疑似深度ぶんだけ頂点Zをずらして視差を作り、
+        カメラをZ方向にゆっくり前後させる（dolly_in、要件定義書 §7）。
+        振幅を上げすぎると疑似深度の粗さや破綻（塗りつぶし領域の境界など）が
+        見えやすくなるので、小さめの値が基本（要件定義書 §11「深度の破綻はカメラ振幅で
+        隠す」）。トグルを外すと頂点Zもカメラも静止し、Phase 1と同じ平面の見た目に戻る。
+        MIDI Clockへの位相同期は未実装（今は時間ベースの一定周期）。
+      </p>
+    </div>
+
+    <div class="section">
       <p class="panel-label">Post FX</p>
       <div class="slider-row">
         <span class="label-line"><span>monochrome</span><span id="mono-amount-val">0.00</span></span>
@@ -152,7 +182,6 @@
 
     <div class="section">
       <p class="hint">
-        カメラは固定（Phase 2で深度ディスプレイスメント＋移動を追加予定）。
         マッピングは <code>config/midi-mapping.json</code> を読み込む。
       </p>
     </div>
@@ -162,12 +191,13 @@
     <div class="viewport-empty" id="viewport-empty">
       左のパネルから写真を読み込むか、「サンプルを読み込む」で試してください。<br>
       SEQTRAKで各トラックを鳴らすと、対応するクラスタの輝度マップの場所が明滅します。
+      カメラは疑似深度に沿ってゆっくり前後に呼吸します（Depth 3Dパネルで調整可）。
     </div>
   </main>
 </div>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="main.js?v=22"></script>
+<script type="module" src="main.js?v=23"></script>
 </body>
 </html>
