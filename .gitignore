@@ -24,6 +24,3 @@ midi-monitor/*.csv
 Thumbs.db
 .vscode/
 .idea/
-
-# Local generated mapping (keep example/schema, not the actual measured one)
-config/midi-mapping.json

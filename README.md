@@ -18,7 +18,7 @@ night-light-vj/
 
 ## 実装フェーズ（要件定義書 §9）
 
-- [x] **Phase 0 — MIDI実測**: `midi-monitor/` — SEQTRAKの全メッセージをログし、トラック別のノート/CC番号を確定する。**他のフェーズより先に完了させる。**
+- [x] **Phase 0 — MIDI実測**: `midi-monitor/` — SEQTRAKの全メッセージをログし、トラック別のノート/CC番号を確定する。実測結果は [`config/midi-mapping.json`](config/midi-mapping.json) に確定済み。
 - [ ] **Phase 1 — 光点明滅の最小構成**: 写真1枚・手作業マスクでMIDI Note Onによる加算合成明滅を確認
 - [ ] **Phase 2 — 深度による3D化**: 深度マップ1枚でディスプレイスメント・カメラ移動を実装
 - [ ] **Phase 3 — バッチツール**: Phase 1〜2の手作業を自動化（`batch/`）
