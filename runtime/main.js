@@ -11,6 +11,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
 const KICK_COLOR = 0xffb74d;
 const MAX_BLOOM_STRENGTH = 3;
@@ -31,6 +32,8 @@ const els = {
   exportPointsBtn: document.getElementById('export-points-btn'),
   brightGain: document.getElementById('bright-gain'),
   brightGainVal: document.getElementById('bright-gain-val'),
+  baseLevel: document.getElementById('base-level'),
+  baseLevelVal: document.getElementById('base-level-val'),
   strength: document.getElementById('strength'),
   strengthVal: document.getElementById('strength-val'),
   radius: document.getElementById('radius'),
@@ -38,6 +41,8 @@ const els = {
   threshold: document.getElementById('threshold'),
   thresholdVal: document.getElementById('threshold-val'),
   ccBloomToggle: document.getElementById('cc-bloom-toggle'),
+  monoAmount: document.getElementById('mono-amount'),
+  monoAmountVal: document.getElementById('mono-amount-val'),
   debugKickBtn: document.getElementById('debug-kick-btn'),
   viewport: document.getElementById('viewport'),
   viewportEmpty: document.getElementById('viewport-empty'),
@@ -129,9 +134,37 @@ function updateMeters() {
 // ============================================================
 
 let renderer, camera, scene, bgMesh;
-let composer, bloomPass;
+let composer, bloomPass, monoPass;
 let currentAspect = 16 / 9;
 let brightGainUniformValue = 1.2;
+let baseLevelUniformValue = 0;
+
+// モノクロ化ポストエフェクト。OutputPass の後（＝表示直前の最終色）に掛けるので、
+// bloomの輝度判定などは通常通りカラーのまま行われ、見た目だけが最後にグレースケール化される。
+// amount=0で通常のカラー、1で完全なモノクロ。中間値で部分的な彩度落としもできる。
+const monoShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+    amount: { value: 0 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float amount;
+    varying vec2 vUv;
+    void main() {
+      vec4 color = texture2D(tDiffuse, vUv);
+      float gray = dot(color.rgb, vec3(0.299, 0.587, 0.114));
+      gl_FragColor = vec4(mix(color.rgb, vec3(gray), amount), color.a);
+    }
+  `,
+};
 
 function initRenderer() {
   renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -149,11 +182,13 @@ function initRenderer() {
   camera.position.z = 5;
 
   bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 1.6, 0.45, 0.55);
+  monoPass = new ShaderPass(monoShader);
 
   composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
   composer.addPass(bloomPass);
   composer.addPass(new OutputPass());
+  composer.addPass(monoPass);
 
   resize();
   window.addEventListener('resize', resize);
@@ -200,13 +235,16 @@ const bgVertexShader = `
 // maskMap の r チャンネルは、その画素が輝度マップに含まれる重み(0-1)。
 // マップが0の場所は写真のまま変化しない。
 // ambient breathing（MIDIが無い間の自動揺らぎ）は検証を単純化するためいったん
-// オミットしている。今はKICKのNote On（kickEnvelope）だけが明るさを動かす、
-// もっともプリミティブな構成。
+// オミットしている。その代わり baseLevel という定数のベースラインだけを残している:
+// マイナス方向にすると、マップが乗っている場所は待機中は元の写真より暗く沈み、
+// KICKが来たときだけそこから持ち上がる（明るさの差が出て「効いている」のが見やすい）。
+// 0ならこれまで通りKICKのNote Onだけが明るさを動かす最小構成に戻る。
 const bgFragmentShader = `
   precision mediump float;
   uniform sampler2D map;
   uniform sampler2D maskMap;
   uniform float kickEnvelope;
+  uniform float baseLevel;
   uniform float brightGain;
   varying vec2 vUv;
 
@@ -217,8 +255,9 @@ const bgFragmentShader = `
     vec3 base = srgbToLinear(tex.rgb);
     float weight = texture2D(maskMap, vUv).r;
 
-    // KICKのエンベロープ(0以上、ノートオンで立ち上がる)分だけ明るさを追加する。
-    float delta = weight * kickEnvelope;
+    // baseLevel（通常は0以下）が待機中の基準を沈め、KICKのエンベロープ
+    // (0以上、ノートオンで立ち上がる)がそこから明るさを持ち上げる。
+    float delta = weight * (baseLevel + kickEnvelope);
 
     float factor = clamp(1.0 + brightGain * delta, 0.06, 3.5);
     gl_FragColor = vec4(base * factor, tex.a);
@@ -254,6 +293,7 @@ function setBackground(source, width, height) {
       map: { value: texture },
       maskMap: { value: makeEmptyMaskTexture() },
       kickEnvelope: { value: 0 },
+      baseLevel: { value: baseLevelUniformValue },
       brightGain: { value: brightGainUniformValue },
     },
     vertexShader: bgVertexShader,
@@ -739,9 +779,14 @@ wireSlider(els.brightGain, els.brightGainVal, (v) => {
   brightGainUniformValue = v;
   if (bgMesh) bgMesh.material.uniforms.brightGain.value = v;
 }, 1.2);
+wireSlider(els.baseLevel, els.baseLevelVal, (v) => {
+  baseLevelUniformValue = v;
+  if (bgMesh) bgMesh.material.uniforms.baseLevel.value = v;
+}, 0);
 wireSlider(els.strength, els.strengthVal, (v) => { bloomPass.strength = v; }, 1.6);
 wireSlider(els.radius, els.radiusVal, (v) => { bloomPass.radius = v; }, 0.45);
 wireSlider(els.threshold, els.thresholdVal, (v) => { bloomPass.threshold = v; }, 0.55);
+wireSlider(els.monoAmount, els.monoAmountVal, (v) => { monoPass.uniforms.amount.value = v; }, 0);
 loadMapping();
 initMIDI();
 tick();

@@ -97,11 +97,17 @@
         <span class="label-line"><span>bright gain（明滅の強さ）</span><span id="bright-gain-val">1.20</span></span>
         <input type="range" id="bright-gain" min="0" max="3" step="0.01" value="1.2">
       </div>
+      <div class="slider-row">
+        <span class="label-line"><span>base level（待機中の沈み）</span><span id="base-level-val">0.00</span></span>
+        <input type="range" id="base-level" min="-1" max="0" step="0.01" value="0">
+      </div>
       <p class="hint">
         輝度マップの値が乗っている場所だけ、MIDIノートに応じて元の写真の明るさを上げる
-        （マップが0の場所は写真のまま変化しない）。ambient breathing（MIDIが無い間の
-        自動揺らぎ）は検証を単純化するためいったんオミットしており、今はKICKの
-        Note Onが来たときだけ明るくなる最小構成になっている。
+        （マップが0の場所は写真のまま変化しない）。<code>base level</code> をマイナスに
+        すると、マップが乗っている場所は待機中は元の写真より暗く沈み、KICKが来たときだけ
+        そこから明るく持ち上がるようになる（0なら待機中は写真のまま静止）。
+        ambient breathing（MIDIが無い間の自動揺らぎ）は検証を単純化するためいったん
+        オミットしている。
       </p>
     </div>
 
@@ -130,6 +136,18 @@
     </div>
 
     <div class="section">
+      <p class="panel-label">Post FX</p>
+      <div class="slider-row">
+        <span class="label-line"><span>monochrome</span><span id="mono-amount-val">0.00</span></span>
+        <input type="range" id="mono-amount" min="0" max="1" step="0.01" value="0">
+      </div>
+      <p class="hint">
+        表示直前の最終色をグレースケールに寄せる（0=カラーのまま、1=完全モノクロ）。
+        bloomの輝度判定はカラーのまま行われた後にこれが最後に掛かるので、光り方には影響しない。
+      </p>
+    </div>
+
+    <div class="section">
       <p class="hint">
         カメラは固定（Phase 2で深度ディスプレイスメント＋移動を追加予定）。
         マッピングは <code>config/midi-mapping.json</code> を読み込む。
@@ -147,6 +165,6 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="main.js?v=14"></script>
+<script type="module" src="main.js?v=16"></script>
 </body>
 </html>

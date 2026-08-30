@@ -53,23 +53,34 @@ MIDIノートに応じてそのマップの値が乗っている場所だけ、�
 ### 明滅（背景シェーダー内で完結）
 
 背景メッシュは独自の `ShaderMaterial`（`map`=元の写真, `maskMap`=輝度マップ）。
-フラグメントシェーダーで、写真の各画素の明るさに `factor = 1 + brightGain * weight * kickEnvelope`
-を掛ける（`weight` はその画素のマップ値）。`factor` は1以上なので明るくなる方向にのみ振れる。
+フラグメントシェーダーで、写真の各画素の明るさに
+`factor = 1 + brightGain * weight * (baseLevel + kickEnvelope)` を掛ける
+（`weight` はその画素のマップ値）。
 
 - KICKエンベロープ: `env = velocity/127 * exp(-t/tau)`。`name: "KICK"` にマッチする
   トラックが複数あれば最大値を採用する（CPU側で計算しシェーダーへuniform渡し）
 - `bright gain` は明滅の強さ全体のゲイン
+- `base level` は待機中（KICKが無いとき）の定数ベースライン。0以下のスライダーで、
+  マイナスにするとマップが乗っている場所は待機中は元の写真より暗く沈み、KICKが来た
+  ときだけそこから明るく持ち上がる。0なら待機中は写真のまま静止する（従来通り）。
 
 **ambient breathing（MIDIが無い間の自動揺らぎ、0を中心に上下する符号付きサイン波）は
 検証を単純化するためいったんオミットしている。** 上記2つのバグでKICKトリガー自体が
 機能しているかどうかの切り分けが難しかったため、まずKICKのNote Onだけで明滅することを
-確認できるプリミティブな構成に戻した。安定して確認できたら再度追加する。
+確認できるプリミティブな構成に戻した。`base level` は定数オフセットのみで揺らぎは無い、
+その簡易版にあたる。安定して確認できたら、ambient breathingの方は再度追加する。
 
 ### ブルーム
 
 selective bloomではなく通常の `UnrealBloomPass`（画面全体の輝度がthresholdを超えた画素が光る）。
 KICKで明るくなった場所（またはもともと明るい場所）がしきい値を超えれば自然に光る。
 「Bloom」パネルのスライダーで調整（SEQTRAKのFX LEVEL CCでも `strength` を操作可能）。
+
+### Post FX（モノクロ）
+
+`EffectComposer` の最後（`OutputPass` の後）に `ShaderPass` でモノクロ化を1枚挟んでいる。
+bloomの輝度判定はその手前でカラーのまま行われるので、光り方には影響しない。
+「Post FX」パネルの `monochrome` スライダー（0=カラーのまま、1=完全モノクロ）で調整する。
 
 ### 色まわり
 
