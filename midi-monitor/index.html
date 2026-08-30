@@ -3,25 +3,35 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MIDI Monitor — Phase 0</title>
+<title>SEQTRAK Signal Monitor — Phase 0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header>
-  <h1>SEQTRAK MIDI Monitor <span class="phase">Phase 0</span></h1>
-  <p class="sub">Web MIDI API で受信した全メッセージをログ出力し、トラック別のノート/CC番号を実測する。</p>
+<header class="device-strip">
+  <div class="title-block">
+    <h1>SEQTRAK Signal Monitor</h1>
+    <span class="phase-tag">Phase 0 — MIDI実測</span>
+  </div>
+  <p class="sub">Web MIDI API で受信した全メッセージをログ出力し、トラック別のノート / CC 番号を実測する。</p>
 </header>
 
 <section class="panel" id="connection-panel">
+  <p class="panel-label">Input</p>
   <div class="row">
     <label for="input-select">MIDI入力デバイス</label>
     <select id="input-select"><option>デバイスを検索中…</option></select>
     <button id="refresh-btn">再スキャン</button>
   </div>
-  <p id="status" class="status status-pending">Web MIDI へのアクセスを要求しています…</p>
+  <div class="status-line">
+    <span class="status-dot pending" id="status-dot"></span>
+    <span id="status" class="status-text pending">Web MIDI へのアクセスを要求しています…</span>
+  </div>
 </section>
 
 <section class="panel">
+  <p class="panel-label">Controls</p>
   <div class="row controls">
     <button id="clear-btn">ログをクリア</button>
     <button id="export-log-btn">ログをJSONで書き出し</button>
@@ -37,15 +47,17 @@
   <section class="panel summary-panel">
     <h2>チャンネル / ノート 集計</h2>
     <p class="hint">SEQTRAK の各トラックを個別に鳴らして、どのチャンネル・ノート番号・ベロシティ範囲が出るかを確認する。</p>
-    <table id="summary-table">
-      <thead>
-        <tr>
-          <th>種別</th><th>Ch</th><th>Note/CC#</th>
-          <th>回数</th><th>Vel/Val min</th><th>Vel/Val max</th><th>最終受信</th><th>トラック名(任意)</th>
-        </tr>
-      </thead>
-      <tbody></tbody>
-    </table>
+    <div class="table-wrap">
+      <table id="summary-table">
+        <thead>
+          <tr>
+            <th>種別</th><th>Ch</th><th>Note/CC#</th>
+            <th>回数</th><th>Min</th><th>Max</th><th>最終受信</th><th>トラック名</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 
   <section class="panel log-panel">
@@ -56,11 +68,19 @@
 
 <footer>
   <p>
-    ヒント: Chrome で <code>file://</code> から開くと Web MIDI がブロックされる場合があります。
-    その場合はこのフォルダで <code>python -m http.server 8000</code> を実行し、
+    このページはブラウザ内だけで動作し、MIDIデータはどこにも送信されません。<br>
+    Chrome で SEQTRAK を USB-C 接続すると、画面上部の「MIDI入力デバイス」に表示されます
+    （Yamaha Steinberg USB Driver のインストールが必要）。接続時にブラウザから MIDI アクセスの
+    許可を求められたら「許可」を選んでください。
+  </p>
+  <p>
+    ヒント: <code>file://</code> で開くと Web MIDI がブロックされる場合があります。その場合は
+    このフォルダで <code>python -m http.server 8000</code> を実行し
     <code>http://localhost:8000/</code> で開いてください。
   </p>
 </footer>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
 
 <script src="main.js"></script>
 </body>

@@ -26,11 +26,23 @@ night-light-vj/
 
 ## Phase 0: MIDIモニターの使い方
 
+Web MIDI API はローカルにファイルを置くか、通常のWebサーバーから配信する必要がある
+（サンドボックスされた埋め込みページ内では `Permissions-Policy` によりブロックされる）。
+このリポジトリには GitHub Pages への自動デプロイ設定（`.github/workflows/pages.yml`）が
+含まれているため、リポジトリ設定で Pages を有効化すれば、クローン不要でURLから直接使える。
+
+**GitHub Pages を有効にする（初回のみ）**
+1. GitHubの当該リポジトリ → Settings → Pages
+2. "Build and deployment" の Source を "GitHub Actions" に設定
+3. `midi-monitor/` に変更をpushすると自動デプロイされ、
+   `https://<owner>.github.io/<repo>/` で公開される
+
+**使い方**
 1. Yamaha Steinberg USB Driver をインストールし、SEQTRAK をUSB-Cで接続する
    （Windows では Bluetooth MIDI は使用不可。ポート排他が問題になる場合は loopMIDI を利用する）
-2. Chrome で `midi-monitor/index.html` を開く
-   - `file://` で Web MIDI がブロックされる場合は、`midi-monitor/` で
-     `python -m http.server 8000` を実行し `http://localhost:8000/` を開く
+2. Chrome で公開URL（または `midi-monitor/index.html`）を開く
+   - ローカルで `file://` から開くとWeb MIDIがブロックされる場合がある。その場合は
+     `midi-monitor/` で `python -m http.server 8000` を実行し `http://localhost:8000/` を開く
 3. SEQTRAK の各トラックを個別に鳴らし、「チャンネル / ノート集計」テーブルで
    ノート番号・チャンネル・ベロシティ範囲を確認する
 4. 各行の「トラック名」欄に KICK / SNARE 等の名前を入力する

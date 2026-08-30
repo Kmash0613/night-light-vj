@@ -6,6 +6,7 @@ const els = {
   select: document.getElementById('input-select'),
   refresh: document.getElementById('refresh-btn'),
   status: document.getElementById('status'),
+  statusDot: document.getElementById('status-dot'),
   clear: document.getElementById('clear-btn'),
   exportLog: document.getElementById('export-log-btn'),
   exportCsv: document.getElementById('export-csv-btn'),
@@ -27,7 +28,17 @@ const MAX_LOG_LINES = 4000;
 
 function setStatus(text, kind) {
   els.status.textContent = text;
-  els.status.className = `status status-${kind}`;
+  els.status.className = `status-text ${kind}`;
+  els.statusDot.className = `status-dot ${kind}`;
+}
+
+function showToast(text, kind) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `toast show ${kind || ''}`;
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(() => { el.className = 'toast'; }, 3200);
 }
 
 function noteName(n) {
@@ -109,7 +120,7 @@ function renderSummaryRow(key, row) {
   const numLabel = row.type === 'note_on' || row.type === 'note_off' || row.type === 'poly_at'
     ? `${row.num} (${noteName(row.num)})`
     : `CC${row.num}`;
-  tr.querySelector('.c-type').textContent = row.type;
+  tr.querySelector('.c-type').innerHTML = `<span class="type-pill ${row.type}">${row.type}</span>`;
   tr.querySelector('.c-ch').textContent = row.ch;
   tr.querySelector('.c-num').textContent = numLabel;
   tr.querySelector('.c-count').textContent = row.count;
@@ -267,6 +278,7 @@ function download(filename, text, mime = 'application/json') {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  showToast(`保存しました: ${filename}`, 'ok');
 }
 
 function exportLogJSON() {
