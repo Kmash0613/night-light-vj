@@ -25,10 +25,21 @@ const els = {
   status: document.getElementById('status'),
   statusDot: document.getElementById('status-dot'),
   meters: document.getElementById('meters'),
+  extractTopPercent: document.getElementById('extract-top-percent'),
+  extractMinArea: document.getElementById('extract-min-area'),
+  extractMaxPoints: document.getElementById('extract-max-points'),
+  extractClusterCount: document.getElementById('extract-cluster-count'),
+  extractTopPercentVal: document.getElementById('extract-top-percent-val'),
+  extractMinAreaVal: document.getElementById('extract-min-area-val'),
+  extractMaxPointsVal: document.getElementById('extract-max-points-val'),
+  extractBtn: document.getElementById('extract-btn'),
+  exportPointsBtn: document.getElementById('export-points-btn'),
   pointSize: document.getElementById('point-size'),
   pointSizeVal: document.getElementById('point-size-val'),
   ambient: document.getElementById('ambient'),
   ambientVal: document.getElementById('ambient-val'),
+  bgSway: document.getElementById('bg-sway'),
+  bgSwayVal: document.getElementById('bg-sway-val'),
   strength: document.getElementById('strength'),
   strengthVal: document.getElementById('strength-val'),
   radius: document.getElementById('radius'),
@@ -238,11 +249,41 @@ function render() {
 // Scene content: background photo + light points
 // ============================================================
 
+// 元の写真自体の輝度も、明るい部分（ネオン等）ほど強くゆっくり揺らす。
+// 揺らぎの位相はUV座標のハッシュから作るので、画面上の場所ごとにバラバラに
+// 明滅して見える（サインが個別にちらつくような効果）。
+const bgVertexShader = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const bgFragmentShader = `
+  precision mediump float;
+  uniform sampler2D map;
+  uniform float time;
+  uniform float swayAmount;
+  varying vec2 vUv;
+  vec3 srgbToLinear(vec3 c) { return pow(max(c, 0.0), vec3(2.2)); }
+  void main() {
+    vec4 tex = texture2D(map, vUv);
+    vec3 color = srgbToLinear(tex.rgb);
+    float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    float ph = fract(sin(dot(floor(vUv * 90.0), vec2(12.9898, 78.233))) * 43758.5453);
+    float sway = 1.0 + swayAmount * luma * sin(time * (0.3 + 0.3 * ph) + ph * 6.2831);
+    gl_FragColor = vec4(color * sway, tex.a);
+  }
+`;
+
+let bgSwayAmountUniformValue = 0.3;
+
 function setBackground(source, width, height) {
   if (bgMesh) {
     scene.remove(bgMesh);
     bgMesh.geometry.dispose();
-    bgMesh.material.map?.dispose();
+    bgMesh.material.uniforms.map.value?.dispose();
     bgMesh.material.dispose();
   }
   currentAspect = width / height;
@@ -251,7 +292,15 @@ function setBackground(source, width, height) {
   texture.needsUpdate = true;
 
   const geometry = new THREE.PlaneGeometry(currentAspect * 2, 2);
-  const material = new THREE.MeshBasicMaterial({ map: texture });
+  const material = new THREE.ShaderMaterial({
+    uniforms: {
+      map: { value: texture },
+      time: { value: 0 },
+      swayAmount: { value: bgSwayAmountUniformValue },
+    },
+    vertexShader: bgVertexShader,
+    fragmentShader: bgFragmentShader,
+  });
   bgMesh = new THREE.Mesh(geometry, material);
   bgMesh.position.z = 0;
   scene.add(bgMesh);
@@ -265,6 +314,7 @@ const pointVertexShader = `
   attribute float cluster;
   attribute vec3 pointColor;
   attribute float phase;
+  attribute float sizeScale;
   uniform float envelopes[${MAX_CLUSTERS}];
   uniform float basePointSize;
   uniform float pixelRatio;
@@ -280,7 +330,7 @@ const pointVertexShader = `
     vEnv = env;
     vColor = pointColor;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = basePointSize * pixelRatio * (0.5 + 0.9 * env);
+    gl_PointSize = basePointSize * pixelRatio * sizeScale * (0.5 + 0.9 * env);
     gl_Position = projectionMatrix * mvPosition;
   }
 `;
@@ -313,6 +363,7 @@ function setPoints(points) {
   const colors = new Float32Array(n * 3);
   const clusters = new Float32Array(n);
   const phases = new Float32Array(n);
+  const sizeScales = new Float32Array(n);
 
   points.forEach((p, i) => {
     positions[i * 3 + 0] = (p.x - 0.5) * currentAspect * 2;
@@ -324,6 +375,7 @@ function setPoints(points) {
     colors[i * 3 + 2] = c[2] / 255;
     clusters[i] = Math.min(MAX_CLUSTERS - 1, Math.max(0, p.cluster || 0));
     phases[i] = Math.random(); // 0-1, used as a per-point phase offset for ambient breathing
+    sizeScales[i] = p.sizeScale || 1;
   });
 
   const geometry = new THREE.BufferGeometry();
@@ -331,6 +383,7 @@ function setPoints(points) {
   geometry.setAttribute('pointColor', new THREE.BufferAttribute(colors, 3));
   geometry.setAttribute('cluster', new THREE.BufferAttribute(clusters, 1));
   geometry.setAttribute('phase', new THREE.BufferAttribute(phases, 1));
+  geometry.setAttribute('sizeScale', new THREE.BufferAttribute(sizeScales, 1));
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
@@ -350,6 +403,109 @@ function setPoints(points) {
   pointsObj = new THREE.Points(geometry, material);
   pointsObj.layers.enable(BLOOM_LAYER); // bloom applies to this layer only
   scene.add(pointsObj);
+}
+
+// ============================================================
+// Auto point extraction (輝度ベースの自動抽出)
+// 要件定義書 §4 の「光点抽出」「クラスタリング」の簡易版をブラウザ内で行う。
+// 深度推定はまだ無い(Phase 2)ため、クラスタ分けは画面上のY座標(下ほど手前)と
+// 面積を使ったヒューリスティックな代用。
+// ============================================================
+
+function extractPointsFromImage(source, naturalW, naturalH, opts) {
+  const { topPercent, minArea, maxDim, maxPoints, clusterCount } = opts;
+  const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
+  const w = Math.max(1, Math.round(naturalW * scale));
+  const h = Math.max(1, Math.round(naturalH * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(source, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+
+  const n = w * h;
+  const luma = new Float32Array(n);
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < n; i++) {
+    const r = data[i * 4], g = data[i * 4 + 1], b = data[i * 4 + 2];
+    const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    luma[i] = l;
+    hist[Math.round(l)] += 1;
+  }
+
+  // Percentile threshold: brightest `topPercent`% of pixels.
+  const targetCount = Math.max(1, Math.round((n * topPercent) / 100));
+  let cum = 0;
+  let threshold = 255;
+  for (let v = 255; v >= 0; v--) {
+    cum += hist[v];
+    if (cum >= targetCount) { threshold = v; break; }
+  }
+
+  // Connected components (4-connectivity, iterative flood fill) over the threshold mask.
+  const visited = new Uint8Array(n);
+  const blobs = [];
+  const stack = new Int32Array(n);
+
+  for (let start = 0; start < n; start++) {
+    if (visited[start] || luma[start] < threshold) continue;
+    let sp = 0;
+    stack[sp++] = start;
+    visited[start] = 1;
+    let sumX = 0, sumY = 0, sumR = 0, sumG = 0, sumB = 0, count = 0;
+    while (sp > 0) {
+      const p = stack[--sp];
+      const px = p % w;
+      const py = (p / w) | 0;
+      sumX += px; sumY += py; count++;
+      sumR += data[p * 4]; sumG += data[p * 4 + 1]; sumB += data[p * 4 + 2];
+      if (px > 0 && !visited[p - 1] && luma[p - 1] >= threshold) { visited[p - 1] = 1; stack[sp++] = p - 1; }
+      if (px < w - 1 && !visited[p + 1] && luma[p + 1] >= threshold) { visited[p + 1] = 1; stack[sp++] = p + 1; }
+      if (py > 0 && !visited[p - w] && luma[p - w] >= threshold) { visited[p - w] = 1; stack[sp++] = p - w; }
+      if (py < h - 1 && !visited[p + w] && luma[p + w] >= threshold) { visited[p + w] = 1; stack[sp++] = p + w; }
+    }
+    if (count >= minArea) {
+      blobs.push({
+        x: sumX / count / w,
+        y: sumY / count / h,
+        color: [Math.round(sumR / count), Math.round(sumG / count), Math.round(sumB / count)],
+        area: count,
+      });
+    }
+  }
+
+  // Cap to the most prominent blobs (largest area) to stay within a sane point budget.
+  blobs.sort((a, b) => b.area - a.area);
+  const capped = blobs.slice(0, maxPoints);
+
+  const maxArea = capped.reduce((m, b) => Math.max(m, b.area), 1);
+  for (const b of capped) {
+    const areaNorm = Math.log(1 + b.area) / Math.log(1 + maxArea);
+    b.sizeScale = 0.6 + 1.4 * areaNorm;
+  }
+
+  assignClustersByDepthProxy(capped, clusterCount);
+  return capped;
+}
+
+function assignClustersByDepthProxy(points, clusterCount) {
+  if (points.length === 0) return points;
+  const maxArea = points.reduce((m, p) => Math.max(m, p.area || 1), 1);
+  const scored = points.map((p) => {
+    const areaNorm = Math.log(1 + (p.area || 1)) / Math.log(1 + maxArea);
+    // 深度の代わりに「画面下ほど手前」+「面積が大きいほど手前」という前提で並べる。
+    // 実際の深度推定はPhase 2で置き換える。
+    return { p, depthScore: 0.7 * p.y + 0.3 * areaNorm };
+  });
+  scored.sort((a, b) => a.depthScore - b.depthScore); // ascending: low = far, high = near
+  const total = scored.length;
+  scored.forEach((s, i) => {
+    const bucket = Math.min(clusterCount - 1, Math.floor((i / total) * clusterCount));
+    s.p.cluster = clusterCount - 1 - bucket; // cluster 0 = 最前景 (config/midi-mapping.jsonの規約に合わせる)
+  });
+  return points;
 }
 
 // ============================================================
@@ -425,13 +581,35 @@ function buildSampleScene() {
 // ============================================================
 
 let loadedImageEl = null;
+let loadedImageW = 0;
+let loadedImageH = 0;
 let loadedPoints = null;
 
 function tryRenderScene() {
   if (!loadedImageEl) return;
   els.viewportEmpty.hidden = true;
-  setBackground(loadedImageEl, loadedImageEl.naturalWidth || loadedImageEl.width, loadedImageEl.naturalHeight || loadedImageEl.height);
+  setBackground(loadedImageEl, loadedImageW, loadedImageH);
   setPoints(loadedPoints || []);
+}
+
+function currentExtractOptions() {
+  return {
+    topPercent: Number(els.extractTopPercent.value),
+    minArea: Number(els.extractMinArea.value),
+    maxPoints: Number(els.extractMaxPoints.value),
+    clusterCount: Number(els.extractClusterCount.value),
+    maxDim: 700,
+  };
+}
+
+function runExtraction({ silent = false } = {}) {
+  if (!loadedImageEl) return;
+  const opts = currentExtractOptions();
+  const t0 = performance.now();
+  loadedPoints = extractPointsFromImage(loadedImageEl, loadedImageW, loadedImageH, opts);
+  setPoints(loadedPoints);
+  const ms = Math.round(performance.now() - t0);
+  if (!silent) showToast(`輝度から自動抽出: ${loadedPoints.length}点 (${ms}ms)`, 'ok');
 }
 
 els.photoInput.addEventListener('change', () => {
@@ -442,12 +620,40 @@ els.photoInput.addEventListener('change', () => {
     const img = new Image();
     img.onload = () => {
       loadedImageEl = img;
-      tryRenderScene();
-      showToast(`写真を読み込みました: ${img.naturalWidth}×${img.naturalHeight}`, 'ok');
+      loadedImageW = img.naturalWidth;
+      loadedImageH = img.naturalHeight;
+      els.viewportEmpty.hidden = true;
+      setBackground(loadedImageEl, loadedImageW, loadedImageH);
+      runExtraction({ silent: true });
+      showToast(`写真を読み込み、光点を自動抽出しました: ${loadedImageW}×${loadedImageH} / ${loadedPoints.length}点`, 'ok');
     };
     img.src = reader.result;
   };
   reader.readAsDataURL(file);
+});
+
+els.extractBtn.addEventListener('click', () => runExtraction());
+
+els.exportPointsBtn.addEventListener('click', () => {
+  if (!loadedPoints || loadedPoints.length === 0) {
+    showToast('光点がありません。先に写真を読み込んでください', 'error');
+    return;
+  }
+  const data = {
+    _comment: '輝度ベースの自動抽出結果（runtime/ で生成）。mask-editor/ で手動調整する際の下敷きにも使える。',
+    generated_at: new Date().toISOString(),
+    image: { width: loadedImageW, height: loadedImageH },
+    points: loadedPoints,
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `points-auto-${Date.now()}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 });
 
 els.pointsInput.addEventListener('change', () => {
@@ -460,7 +666,7 @@ els.pointsInput.addEventListener('change', () => {
       if (!Array.isArray(data.points)) throw new Error('points配列がありません');
       loadedPoints = data.points;
       tryRenderScene();
-      showToast(`光点データを読み込みました: ${loadedPoints.length}点`, 'ok');
+      showToast(`光点データを読み込みました（自動抽出を上書き）: ${loadedPoints.length}点`, 'ok');
     } catch (err) {
       showToast(`points.jsonの読み込みに失敗: ${err.message}`, 'error');
     }
@@ -471,6 +677,8 @@ els.pointsInput.addEventListener('change', () => {
 els.sampleBtn.addEventListener('click', () => {
   const sample = buildSampleScene();
   loadedImageEl = sample.canvas;
+  loadedImageW = sample.width;
+  loadedImageH = sample.height;
   loadedPoints = sample.points;
   tryRenderScene();
   showToast(`サンプルシーンを読み込みました: ${sample.points.length}点`, 'ok');
@@ -564,6 +772,15 @@ els.select.addEventListener('change', () => connectTo(els.select.value));
 // Bloom controls
 // ============================================================
 
+// Extraction sliders only update their displayed value while dragging — re-extracting
+// on every input event would be wasteful, so they apply on the "再抽出" button / photo load.
+function wireDisplayOnly(input, label, decimals = 0) {
+  label.textContent = Number(input.value).toFixed(decimals);
+  input.addEventListener('input', () => {
+    label.textContent = Number(input.value).toFixed(decimals);
+  });
+}
+
 function wireSlider(input, label, apply, initial) {
   input.value = initial;
   label.textContent = Number(initial).toFixed(2);
@@ -597,6 +814,9 @@ function tick() {
     pointsObj.material.uniforms.envelopes.value = clusterEnvelopes;
     pointsObj.material.uniforms.time.value = now;
   }
+  if (bgMesh) {
+    bgMesh.material.uniforms.time.value = now;
+  }
 
   if (renderer && bgMesh) {
     render();
@@ -608,6 +828,9 @@ function tick() {
 // ============================================================
 
 initRenderer();
+wireDisplayOnly(els.extractTopPercent, els.extractTopPercentVal, 1);
+wireDisplayOnly(els.extractMinArea, els.extractMinAreaVal, 0);
+wireDisplayOnly(els.extractMaxPoints, els.extractMaxPointsVal, 0);
 wireSlider(els.pointSize, els.pointSizeVal, (v) => {
   pointSizeUniformValue = v;
   if (pointsObj) pointsObj.material.uniforms.basePointSize.value = v;
@@ -616,6 +839,10 @@ wireSlider(els.ambient, els.ambientVal, (v) => {
   ambientAmountUniformValue = v;
   if (pointsObj) pointsObj.material.uniforms.ambientAmount.value = v;
 }, 0.35);
+wireSlider(els.bgSway, els.bgSwayVal, (v) => {
+  bgSwayAmountUniformValue = v;
+  if (bgMesh) bgMesh.material.uniforms.swayAmount.value = v;
+}, 0.3);
 wireSlider(els.strength, els.strengthVal, (v) => { bloomPass.strength = v; }, 1.6);
 wireSlider(els.radius, els.radiusVal, (v) => { bloomPass.radius = v; }, 0.45);
 wireSlider(els.threshold, els.thresholdVal, (v) => { bloomPass.threshold = v; }, 0.12);

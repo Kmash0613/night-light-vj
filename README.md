@@ -12,7 +12,7 @@ night-light-vj/
   index.html              # 全ツールへのリンク（GitHub Pagesのトップページ）
   docs/requirements.md    # 要件定義書
   midi-monitor/           # Phase 0: MIDI実測ツール
-  mask-editor/             # Phase 1: 光点マスク（手作業）作成ツール
+  mask-editor/             # Phase 1: 光点マスクの手作業作成ツール（任意、runtime/は自動抽出が既定）
   runtime/                 # Phase 1-4: リアルタイム描画ランタイム（Three.js）
   config/                  # MIDIマッピング設定（JSON外出し）
   batch/                   # Phase 3: バッチ前処理ツール（Python, 未実装・雛形のみ）
@@ -21,7 +21,7 @@ night-light-vj/
 ## 実装フェーズ（要件定義書 §9）
 
 - [x] **Phase 0 — MIDI実測**: `midi-monitor/` — SEQTRAKの全メッセージをログし、トラック別のノート/CC番号を確定する。実測結果は [`config/midi-mapping.json`](config/midi-mapping.json) に確定済み。
-- [x] **Phase 1 — 光点明滅の最小構成**（実装済み・実機での確認待ち）: `mask-editor/` で写真から光点を手作業配置し、`runtime/` でMIDI Note Onによる加算合成明滅とブルームを確認する。カメラは固定（移動なし）。
+- [x] **Phase 1 — 光点明滅の最小構成**（実装済み・実機での確認待ち）: `runtime/` に写真を読み込むと輝度から光点を自動抽出し、MIDI Note Onによる加算合成明滅とブルームを確認できる。手動配置したい場合は `mask-editor/`（任意）。カメラは固定（移動なし）。
 - [ ] **Phase 2 — 深度による3D化**: 深度マップ1枚でディスプレイスメント・カメラ移動を実装
 - [ ] **Phase 3 — バッチツール**: Phase 1〜2の手作業を自動化（`batch/`）
 - [ ] **Phase 4 — ライブラリ化**: 複数シーン管理・先読み・カメラパス自動選択
@@ -56,19 +56,21 @@ Web MIDI API はローカルにファイルを置くか、通常のWebサーバ�
 
 写真も光点データもブラウザ内だけで処理され、どこにも送信されない（サーバーにアップロードしない）。
 
-1. **公開URL の `mask-editor/` を開く**
-   - 夜景写真を読み込み、光点にしたい場所をクリックして配置する
-   - クリックのたびにクラスタ（深度グループ、0=最前景〜3=最遠景が目安）を選んで割り当てる
-     （数字キー `0`〜`7` でも切り替え可能）
-   - 「points.json を書き出し」でダウンロードする
-2. **公開URL の `runtime/` を開く**
-   - 左パネルで元の写真と、1で書き出した `points.json` を読み込む
-   - （写真がまだ無ければ「サンプルを読み込む」でプレースホルダー画像で動作確認できる）
+1. **公開URL の `runtime/` を開く**
+   - 左パネルで夜景写真を読み込む（写真がまだ無ければ「サンプルを読み込む」でも可）
+   - 読み込むと同時に、写真の輝度が高い場所から光点を自動抽出する（「Auto Extract」パネル）。
+     `top %` / `min area` / `max points` / `clusters` を変えて「再抽出」で調整できる
    - SEQTRAKを接続してノートを鳴らすと、`config/midi-mapping.json` の `cluster` に対応した
      光点が加算合成・指数減衰（`tau`）で明滅する
    - 「Cluster Envelopes」のメーターで各クラスタの減衰カーブを確認できる
+   - 「Light Points」の `ambient breathing`、「Background」の `luminance sway` で、
+     MIDIが鳴っていない間の光点／写真自体の明滅（呼吸）を調整する
    - 「Bloom」のスライダーでブルームの見え方を調整する（SEQTRAKのFX LEVELノブでも
      `strength` を操作できる — チェックボックスでON/OFF切り替え）
+2. **手動で光点を配置したい場合は `mask-editor/` を使う**（任意）
+   - 写真をクリックして光点を配置し、クラスタを割り当てる（数字キー `0`〜`7` でも切り替え可能）
+   - 「points.json を書き出し」→ `runtime/` の「光点データ（手動、任意）」欄から読み込むと、
+     自動抽出の代わりに使える
 
 カメラは固定（移動なし）。深度によるディスプレイスメントとカメラ移動はPhase 2で追加する。
 

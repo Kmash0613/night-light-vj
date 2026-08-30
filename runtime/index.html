@@ -32,16 +32,48 @@
         <input type="file" id="photo-input" accept="image/*">
       </div>
       <div class="row">
-        <label for="points-input">光点データ</label>
-        <input type="file" id="points-input" accept="application/json,.json">
-      </div>
-      <div class="row">
         <button id="sample-btn">サンプルを読み込む</button>
       </div>
       <p class="hint">
-        <code>mask-editor/</code> で作った <code>points.json</code> を読み込む。
-        画像・点データはブラウザ内だけで処理され、どこにも送信されない。
+        写真を読み込むと、輝度の高い場所から光点を自動抽出する（下の Auto Extract 参照）。
+        画像はブラウザ内だけで処理され、どこにも送信されない。
       </p>
+    </div>
+
+    <div class="section">
+      <p class="panel-label">Auto Extract（輝度から光点を自動生成）</p>
+      <div class="slider-row">
+        <span class="label-line"><span>top %（明るい上位何%を光点にするか）</span><span id="extract-top-percent-val">3.0</span></span>
+        <input type="range" id="extract-top-percent" min="0.5" max="15" step="0.5" value="3">
+      </div>
+      <div class="slider-row">
+        <span class="label-line"><span>min area（ノイズ除去、px）</span><span id="extract-min-area-val">4</span></span>
+        <input type="range" id="extract-min-area" min="1" max="30" step="1" value="4">
+      </div>
+      <div class="slider-row">
+        <span class="label-line"><span>max points</span><span id="extract-max-points-val">700</span></span>
+        <input type="range" id="extract-max-points" min="50" max="2000" step="10" value="700">
+      </div>
+      <div class="row">
+        <label for="extract-cluster-count">clusters</label>
+        <select id="extract-cluster-count">
+          <option value="3">3</option>
+          <option value="4" selected>4</option>
+          <option value="5">5</option>
+        </select>
+        <button id="extract-btn">再抽出</button>
+        <button id="export-points-btn">points.json を書き出し</button>
+      </div>
+      <p class="hint">
+        深度推定はまだ無い（Phase 2）ため、クラスタは「画面下ほど手前・面積が大きいほど手前」という
+        簡易ルールで割り当てる暫定版。<code>config/midi-mapping.json</code> の cluster と対応。
+        <code>mask-editor/</code> で作った <code>points.json</code> を下の欄で読み込めば、
+        自動抽出の代わりに手動データを使うこともできる。
+      </p>
+      <div class="row">
+        <label for="points-input">光点データ（手動、任意）</label>
+        <input type="file" id="points-input" accept="application/json,.json">
+      </div>
     </div>
 
     <div class="section">
@@ -74,6 +106,17 @@
       <p class="hint">
         MIDIが鳴っていない間も、街が微かに息をするように光点を明滅させる量。
         「呼吸する街」の土台（要件定義書 §1）。0にするとMIDIノートでのみ光る。
+      </p>
+    </div>
+
+    <div class="section">
+      <p class="panel-label">Background</p>
+      <div class="slider-row">
+        <span class="label-line"><span>luminance sway（写真自体の輝度ゆらぎ）</span><span id="bg-sway-val">0.30</span></span>
+        <input type="range" id="bg-sway" min="0" max="0.8" step="0.01" value="0.3">
+      </div>
+      <p class="hint">
+        元の写真も、明るい場所（ネオン等）ほど強くゆっくり明滅する。0で元の写真のまま静止。
       </p>
     </div>
 
