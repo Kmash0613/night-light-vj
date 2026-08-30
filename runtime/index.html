@@ -6,7 +6,7 @@
 <title>Night Light VJ — Phase 1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
-<link rel="stylesheet" href="style.css?v=11">
+<link rel="stylesheet" href="style.css?v=12">
 <script type="importmap">
 {
   "imports": {
@@ -46,25 +46,18 @@
         <span class="label-line"><span>top %（明るい上位何%をマップに含めるか）</span><span id="extract-top-percent-val">8.0</span></span>
         <input type="range" id="extract-top-percent" min="0.5" max="50" step="0.5" value="8">
       </div>
-      <div class="slider-row">
-        <span class="label-line"><span>min area（ノイズ除去、px）</span><span id="extract-min-area-val">4</span></span>
-        <input type="range" id="extract-min-area" min="1" max="30" step="1" value="4">
-      </div>
-      <div class="slider-row">
-        <span class="label-line"><span>max regions</span><span id="extract-max-points-val">1500</span></span>
-        <input type="range" id="extract-max-points" min="50" max="6000" step="10" value="1500">
-      </div>
       <div class="row">
         <button id="extract-btn">再抽出</button>
         <button id="export-points-btn">検出データを書き出し</button>
       </div>
       <p class="hint" id="extract-status">検出: -</p>
       <p class="hint">
-        クラスタ分けは無し。検出した領域はすべて同じ輝度マップに含まれ、KICKトラックの
-        Note Onに連動して一律に明滅する（<code>config/midi-mapping.json</code> の name="KICK"
-        のトラックを見る。無ければ cluster_trigger 全体をKICK扱いにする）。
+        画素ごとに直接、輝度をそのまま重みにしてマップに書き込む（塊検出はしない）。
+        クラスタ分けは無く、マップ全体がKICKトラックのNote Onに連動して一律に明滅する
+        （<code>config/midi-mapping.json</code> の name="KICK" のトラックを見る。
+        無ければ cluster_trigger 全体をKICK扱いにする）。
         <code>mask-editor/</code> で作った <code>points.json</code> を下の欄で読み込むと、
-        自動抽出の代わりにその点群からマップを作る（clusterの値は現状無視される）。
+        自動抽出の代わりにその点群からマップを作る。
       </p>
       <div class="row">
         <label for="points-input">光点データ（手動、任意）</label>
@@ -158,6 +151,6 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="main.js?v=11"></script>
+<script type="module" src="main.js?v=12"></script>
 </body>
 </html>

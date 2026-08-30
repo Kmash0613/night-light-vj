@@ -26,10 +26,6 @@ const els = {
   meters: document.getElementById('meters'),
   extractTopPercent: document.getElementById('extract-top-percent'),
   extractTopPercentVal: document.getElementById('extract-top-percent-val'),
-  extractMinArea: document.getElementById('extract-min-area'),
-  extractMinAreaVal: document.getElementById('extract-min-area-val'),
-  extractMaxPoints: document.getElementById('extract-max-points'),
-  extractMaxPointsVal: document.getElementById('extract-max-points-val'),
   extractStatus: document.getElementById('extract-status'),
   extractBtn: document.getElementById('extract-btn'),
   exportPointsBtn: document.getElementById('export-points-btn'),
@@ -297,13 +293,19 @@ function applyMaskCanvas(maskCanvas) {
 }
 
 // ============================================================
-// Luminance map extraction (要件定義書 §4 の簡易版・ブラウザ内実装)
-// クラスタ分けはいったん無し。検出した領域はすべて同じ1チャンネルの重みマップに
+// Luminance map extraction（要件定義書 §4 の簡易版・ブラウザ内実装）
+// クラスタ分けはいったん無し。検出した画素はすべて同じ1チャンネルの重みマップに
 // 書き込み、KICKトラックのエンベロープで一律に明滅させる。
+//
+// 以前は連結成分（塊）検出をしてから重みを付けていたが、閾値の位置次第で
+// 「塊はできるのに重みが全部0になる」「塊が画像の半分を覆う」といった
+// 縮退ケースを何度も踏んだ。今は塊検出をやめ、各画素ごとに直接
+// 「その画素自身の輝度」を重みにする。この式は threshold がどこに来ても
+// 数学的に0除算にならず、閾値を超えた画素は必ず何らかの重みを持つ。
 // ============================================================
 
 function extractLuminanceMask(source, naturalW, naturalH, opts) {
-  const { topPercent, minArea, maxDim, maxRegions } = opts;
+  const { topPercent, maxDim } = opts;
   const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
   const w = Math.max(1, Math.round(naturalW * scale));
   const h = Math.max(1, Math.round(naturalH * scale));
@@ -326,6 +328,8 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
   }
 
   // Percentile threshold: brightest `topPercent`% of pixels.
+  // targetCount <= n が保証されるため、この閾値を満たす画素は必ず1個以上ある
+  // （= 「0領域」は構造的に起こり得ない。以前あった0領域リトライは不要）。
   const targetCount = Math.max(1, Math.round((n * topPercent) / 100));
   let cum = 0;
   let threshold = 255;
@@ -334,74 +338,25 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
     if (cum >= targetCount) { threshold = v; break; }
   }
 
-  // Connected components (4-connectivity, iterative flood fill) over the threshold mask.
-  const visited = new Uint8Array(n);
-  const stack = new Int32Array(n);
-  const blobs = []; // {pixels:number[], area, x, y, color}
-
-  for (let start = 0; start < n; start++) {
-    if (visited[start] || luma[start] < threshold) continue;
-    let sp = 0;
-    stack[sp++] = start;
-    visited[start] = 1;
-    const pixels = [start];
-    let sumX = 0, sumY = 0, sumR = 0, sumG = 0, sumB = 0;
-    while (sp > 0) {
-      const p = stack[--sp];
-      const px = p % w;
-      const py = (p / w) | 0;
-      sumX += px; sumY += py;
-      sumR += data[p * 4]; sumG += data[p * 4 + 1]; sumB += data[p * 4 + 2];
-      if (px > 0 && !visited[p - 1] && luma[p - 1] >= threshold) { visited[p - 1] = 1; stack[sp++] = p - 1; pixels.push(p - 1); }
-      if (px < w - 1 && !visited[p + 1] && luma[p + 1] >= threshold) { visited[p + 1] = 1; stack[sp++] = p + 1; pixels.push(p + 1); }
-      if (py > 0 && !visited[p - w] && luma[p - w] >= threshold) { visited[p - w] = 1; stack[sp++] = p - w; pixels.push(p - w); }
-      if (py < h - 1 && !visited[p + w] && luma[p + w] >= threshold) { visited[p + w] = 1; stack[sp++] = p + w; pixels.push(p + w); }
-    }
-    const area = pixels.length;
-    // 「光点」ではなく空や壁のグラデーションが丸ごと1つの塊としてつながって
-    // しまうことがある（topPercentを上げすぎた時ほど起きやすい）。画像の5%を
-    // 超えるような塊は光点ではないとみなして除外する。
-    if (area >= minArea && area <= n * 0.05) {
-      blobs.push({
-        pixels,
-        area,
-        x: sumX / area / w,
-        y: sumY / area / h,
-        color: [Math.round(sumR / area), Math.round(sumG / area), Math.round(sumB / area)],
-      });
-    }
-  }
-
-  // Cap to the most prominent blobs (largest area) to stay within a sane budget.
-  blobs.sort((a, b) => b.area - a.area);
-  const capped = blobs.slice(0, maxRegions);
-
-  // Paint the mask: single-channel weight map (stored in the R channel).
   const maskCanvas = document.createElement('canvas');
   maskCanvas.width = w;
   maskCanvas.height = h;
   const maskCtx = maskCanvas.getContext('2d');
   const maskData = maskCtx.createImageData(w, h); // transparent black by default
 
-  // 重みは threshold で 0.35、255 で 1.0 になるように下駄を履かせる。
-  // 白飛び（255）が多い写真だと threshold 自体が255になり得て、その場合
-  // luma===threshold===255 の画素ばかりになる。以前の式 (luma-threshold)/(255-threshold)
-  // だとこのケースで全画素の重みが常に0になり、輝度マップが実質空になって
-  // 何も明滅しなくなっていた。
-  const range = Math.max(16, 255 - threshold);
-  for (const blob of capped) {
-    for (const idx of blob.pixels) {
-      const t = Math.min(1, Math.max(0, (luma[idx] - threshold) / range));
-      const weight = 0.35 + 0.65 * t;
-      const di = idx * 4; // R channel
-      const v = Math.round(weight * 255);
-      if (v > maskData.data[di]) maskData.data[di] = v;
-    }
+  let qualifying = 0;
+  for (let i = 0; i < n; i++) {
+    if (luma[i] < threshold) continue;
+    qualifying++;
+    // 重みは画素自身の輝度（0-255を0-1に正規化）で決める。thresholdからの
+    // 距離ではないので、thresholdが255付近になっても0除算的に潰れない。
+    // 最低でも0.35は確保し、閾値ぎりぎりの画素も見えるようにする。
+    const weight = Math.min(1, Math.max(0.35, luma[i] / 255));
+    maskData.data[i * 4] = Math.round(weight * 255); // R channel
   }
   maskCtx.putImageData(maskData, 0, 0);
 
-  const exportBlobs = capped.map((b) => ({ x: b.x, y: b.y, color: b.color, area: b.area }));
-  return { maskCanvas, regionCount: capped.length, exportBlobs };
+  return { maskCanvas, coveragePercent: (100 * qualifying) / n, threshold };
 }
 
 // 手作業の points.json (mask-editor/ 製) を、同じ1チャンネルの重みマップに焼き直す。
@@ -508,22 +463,20 @@ let loadedImageH = 0;
 function currentExtractOptions() {
   return {
     topPercent: Number(els.extractTopPercent.value),
-    minArea: Number(els.extractMinArea.value),
-    maxRegions: Number(els.extractMaxPoints.value),
     maxDim: 700,
   };
 }
 
-let lastExportBlobs = [];
+let lastMaskInfo = null; // { coveragePercent, threshold } — debug export用
 
-// 抽出結果を常時表示するステータス行。0領域のまま気づかない、というのを防ぐ。
+// 抽出結果を常時表示するステータス行。
 function setExtractStatus(text, kind) {
   if (!els.extractStatus) return;
   els.extractStatus.textContent = text;
   els.extractStatus.className = `hint${kind === 'error' ? ' extract-status-error' : ''}`;
 }
 
-function runExtraction({ silent = false, _retried = false } = {}) {
+function runExtraction({ silent = false } = {}) {
   if (!loadedImageEl) return;
   const opts = currentExtractOptions();
   const t0 = performance.now();
@@ -536,23 +489,13 @@ function runExtraction({ silent = false, _retried = false } = {}) {
     setExtractStatus(`検出: エラー (${err.message})`, 'error');
     return;
   }
-  const { maskCanvas, regionCount, exportBlobs } = result;
+  const { maskCanvas, coveragePercent, threshold } = result;
   applyMaskCanvas(maskCanvas);
-  lastExportBlobs = exportBlobs;
+  lastMaskInfo = { coveragePercent, threshold };
   const ms = Math.round(performance.now() - t0);
 
-  // 0領域のまま気づかず「全く明滅しない」状態になるのを防ぐため、top %を上げて自動的に1回だけ再試行する。
-  if (regionCount === 0 && !_retried && opts.topPercent < 20) {
-    const bumped = Math.min(20, opts.topPercent * 2);
-    els.extractTopPercent.value = bumped;
-    els.extractTopPercentVal.textContent = bumped.toFixed(1);
-    showToast(`0領域だったため top % を ${bumped.toFixed(1)}% に上げて再試行します`, 'error');
-    runExtraction({ silent, _retried: true });
-    return;
-  }
-
-  setExtractStatus(`検出: ${regionCount}領域 (top ${opts.topPercent}% / ${ms}ms)`, regionCount === 0 ? 'error' : null);
-  if (!silent) showToast(`輝度マップを再生成: ${regionCount}領域 (${ms}ms)`, 'ok');
+  setExtractStatus(`検出: 画像の${coveragePercent.toFixed(1)}% (輝度閾値 ${threshold} / ${ms}ms)`, coveragePercent === 0 ? 'error' : null);
+  if (!silent) showToast(`輝度マップを再生成: 画像の${coveragePercent.toFixed(1)}% (${ms}ms)`, 'ok');
 }
 
 els.photoInput.addEventListener('change', () => {
@@ -568,7 +511,8 @@ els.photoInput.addEventListener('change', () => {
       els.viewportEmpty.hidden = true;
       setBackground(loadedImageEl, loadedImageW, loadedImageH);
       runExtraction({ silent: true });
-      showToast(`写真を読み込みました: ${loadedImageW}×${loadedImageH} / ${lastExportBlobs.length}領域`, 'ok');
+      const pct = lastMaskInfo ? lastMaskInfo.coveragePercent.toFixed(1) : '?';
+      showToast(`写真を読み込みました: ${loadedImageW}×${loadedImageH} / 輝度マップ ${pct}%`, 'ok');
     };
     img.src = reader.result;
   };
@@ -578,21 +522,23 @@ els.photoInput.addEventListener('change', () => {
 els.extractBtn.addEventListener('click', () => runExtraction());
 
 els.exportPointsBtn.addEventListener('click', () => {
-  if (!lastExportBlobs.length) {
+  if (!lastMaskInfo) {
     showToast('検出データがありません。先に写真を読み込んでください', 'error');
     return;
   }
   const data = {
-    _comment: '輝度マップ生成時に検出された領域（デバッグ用/mask-editorとの互換用）。',
+    _comment: '輝度マップ生成時の統計（デバッグ用）。マップ自体は各画素ごとの重みで、個別の点としては保持していない。',
     generated_at: new Date().toISOString(),
     image: { width: loadedImageW, height: loadedImageH },
-    points: lastExportBlobs,
+    top_percent: Number(els.extractTopPercent.value),
+    threshold: lastMaskInfo.threshold,
+    coverage_percent: lastMaskInfo.coveragePercent,
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `luminance-regions-${Date.now()}.json`;
+  a.download = `luminance-map-stats-${Date.now()}.json`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -614,7 +560,7 @@ els.pointsInput.addEventListener('change', () => {
       if (!Array.isArray(data.points)) throw new Error('points配列がありません');
       const maskCanvas = pointsToMaskCanvas(data.points, loadedImageW, loadedImageH, 700);
       applyMaskCanvas(maskCanvas);
-      lastExportBlobs = data.points;
+      setExtractStatus(`検出: 手動データ ${data.points.length}点を使用中`, null);
       showToast(`光点データからマップを生成しました（自動抽出を上書き）: ${data.points.length}点`, 'ok');
     } catch (err) {
       showToast(`points.jsonの読み込みに失敗: ${err.message}`, 'error');
@@ -631,7 +577,8 @@ els.sampleBtn.addEventListener('click', () => {
   els.viewportEmpty.hidden = true;
   setBackground(loadedImageEl, loadedImageW, loadedImageH);
   runExtraction({ silent: true });
-  showToast(`サンプルシーンを読み込みました: ${lastExportBlobs.length}領域`, 'ok');
+  const pct = lastMaskInfo ? lastMaskInfo.coveragePercent.toFixed(1) : '?';
+  showToast(`サンプルシーンを読み込みました: 輝度マップ ${pct}%`, 'ok');
 });
 
 // ============================================================
@@ -791,8 +738,6 @@ function tick() {
 
 initRenderer();
 wireDisplayOnly(els.extractTopPercent, els.extractTopPercentVal, 1);
-wireDisplayOnly(els.extractMinArea, els.extractMinAreaVal, 0);
-wireDisplayOnly(els.extractMaxPoints, els.extractMaxPointsVal, 0);
 wireSlider(els.brightGain, els.brightGainVal, (v) => {
   brightGainUniformValue = v;
   if (bgMesh) bgMesh.material.uniforms.brightGain.value = v;
