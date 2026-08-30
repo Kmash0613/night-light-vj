@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - claude/attachment-project-start-0w3pmp
+      - claude/reintroduce-clusters
   workflow_dispatch:
 
 permissions:

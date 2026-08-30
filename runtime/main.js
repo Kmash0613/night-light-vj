@@ -1,10 +1,13 @@
-// Phase 1: 光点明滅の最小構成（輝度マップ方式・簡易版）
+// Phase 1: 光点明滅の最小構成（輝度マップ方式）
 // 写真1枚 + カメラ固定。個別の光点（パーティクル）は打たず、写真の輝度が高い場所を
-// 検出して「輝度マップ」（重み1チャンネル）を作り、KICKトラックのNote Onに応じて
-// そのマップの値が乗っている場所だけ、元の写真の明るさを上げ下げする。
-// クラスタ分け（トラックごとに別々の場所を光らせる）はいったん無くし、
-// 全ての光る場所がKICKに連動する最小構成にしている。ブルームは通常のUnrealBloomPass。
-// 要件定義書 §5, §9 Phase 1 に対応。
+// 検出して「輝度マップ」（重み4チャンネル＝クラスタ分）を作り、各クラスタに紐づく
+// トラックのNote Onに応じて、そのクラスタの重みが乗っている場所だけ、元の写真の
+// 明るさを上げ下げする。ブルームは通常のUnrealBloomPass。要件定義書 §5, §9 Phase 1 に対応。
+//
+// クラスタ分けは一度、動作確認を単純化するために丸ごと無くしKICK一本にしていたが、
+// 明滅の土台（輝度マップ生成・MIDI連動・16:9出力）が安定して確認できたので復活させた。
+// 塊（連結成分）検出は使わず、画素ごとの輝度で重みを決める設計は維持したまま、
+// クラスタの割り当てだけを画素のY位置（画面下ほど手前＝cluster0）で振り分けている。
 
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -13,7 +16,10 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 
-const KICK_COLOR = 0xffb74d;
+// 輝度マップはRGBAの4チャンネルまでしか安全に持てない（後述のDataTexture参照）ので、
+// クラスタは最大4つ。config/midi-mapping.jsonの実測データも cluster: 0-3 の4つのみ使う。
+const CLUSTER_COLORS = ['#ffb74d', '#ff7a59', '#6fb7e0', '#c792ea']; // R,G,B,Aチャンネルの順と対応
+const CLUSTER_COUNT = CLUSTER_COLORS.length;
 const MAX_BLOOM_STRENGTH = 3;
 const OUTPUT_ASPECT = 16 / 9; // 出力フレームは常に16:9固定。写真は歪ませずコンテインフィット（黒帯あり、クロップ無し）。
 
@@ -62,9 +68,13 @@ function showToast(text, kind) {
 // ============================================================
 
 let mapping = { notes: [], control_changes: [] };
-let kickNoteEnvelopes = []; // KICKにマッチしたnote entryごとの {value, start}（通常は1個）
-let kickEntryIndices = []; // mapping.notes の中で「KICK」とみなすエントリのindex
-let kickEnvelope = 0; // 現在のKICKエンベロープ値（複数エントリがあれば最大値）
+let clusterNoteEnvelopes = []; // mapping.notes の各エントリごとの {value, start}
+// clusterEntryIndices[c] = クラスタcにマッチする mapping.notes のindex配列。
+// loadMapping()（非同期）が完了する前にも tick() が clusterEntryIndices[c] を参照するので、
+// 空配列ではなく最初からCLUSTER_COUNT個の空配列で初期化しておく（[c]がundefinedにならないように）。
+let clusterEntryIndices = Array.from({ length: CLUSTER_COUNT }, () => []);
+let kickEntryIndices = []; // name="KICK" のエントリ（デバッグボタン専用。無ければcluster0全体で代用）
+let clusterEnvelope = new Float32Array(CLUSTER_COUNT); // 現在の各クラスタのエンベロープ値（複数エントリがあれば最大値）
 
 async function loadMapping() {
   try {
@@ -72,22 +82,29 @@ async function loadMapping() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     mapping = await res.json();
 
-    // 「すべてKICKに連動」: role=cluster_trigger かつ name が KICK のエントリを探す。
-    // 見つからない場合は cluster_trigger 全体をKICK扱いにフォールバックする。
+    // role=cluster_trigger のエントリを cluster フィールドでグループ化する。
+    // cluster が 0-3 の範囲外/nullなら cluster 0 にフォールバック（他のマッピング
+    // ファイルでも壊れないように）。
+    clusterEntryIndices = Array.from({ length: CLUSTER_COUNT }, () => []);
+    mapping.notes.forEach((n, i) => {
+      if (n.role !== 'cluster_trigger') return;
+      const c = Number.isInteger(n.cluster) && n.cluster >= 0 && n.cluster < CLUSTER_COUNT ? n.cluster : 0;
+      clusterEntryIndices[c].push(i);
+    });
+
+    // デバッグボタン用: name="KICK" のエントリを個別に探す。無ければ cluster0 全体で代用する
+    // （configの実測データでは常にKICK=cluster0だが、他のマッピングファイルでも動くように）。
     kickEntryIndices = mapping.notes
       .map((n, i) => ({ n, i }))
       .filter(({ n }) => n.role === 'cluster_trigger' && n.name && n.name.toUpperCase() === 'KICK')
       .map(({ i }) => i);
     if (kickEntryIndices.length === 0) {
-      kickEntryIndices = mapping.notes
-        .map((n, i) => ({ n, i }))
-        .filter(({ n }) => n.role === 'cluster_trigger')
-        .map(({ i }) => i);
+      kickEntryIndices = clusterEntryIndices[0].slice();
       if (kickEntryIndices.length > 0) {
-        console.warn('config/midi-mapping.json に name="KICK" のエントリが無いため、cluster_trigger 全体をKICK扱いにします。');
+        console.warn('config/midi-mapping.json に name="KICK" のエントリが無いため、cluster 0 全体をKICK扱いにします。');
       }
     }
-    kickNoteEnvelopes = mapping.notes.map(() => ({ value: 0, start: 0 }));
+    clusterNoteEnvelopes = mapping.notes.map(() => ({ value: 0, start: 0 }));
     buildMeters();
   } catch (err) {
     showToast('config/midi-mapping.json を読み込めませんでした。file:// では動かないので http(s) 経由で開いてください。', 'error');
@@ -96,38 +113,44 @@ async function loadMapping() {
 }
 
 // ============================================================
-// Kick envelope meter (UI)
+// Cluster envelope meters (UI)
 // ============================================================
 
-let meterFill = null;
-let meterVal = null;
+let meterFills = []; // meterFills[c]
+let meterVals = []; // meterVals[c]
 
 function buildMeters() {
   els.meters.innerHTML = '';
-  if (kickEntryIndices.length === 0) {
+  meterFills = [];
+  meterVals = [];
+  const anyEntries = clusterEntryIndices.some((arr) => arr.length > 0);
+  if (!anyEntries) {
     els.meters.innerHTML = '<p class="hint">config/midi-mapping.json に cluster_trigger のマッピングがありません。</p>';
-    meterFill = null;
-    meterVal = null;
     return;
   }
-  const color = `#${KICK_COLOR.toString(16).padStart(6, '0')}`;
-  const row = document.createElement('div');
-  row.className = 'meter-row';
-  row.innerHTML = `
-    <span class="dot" style="background:${color}"></span>
-    <span>KICK</span>
-    <span class="track"><span class="fill" style="background:${color}"></span></span>
-    <span class="val">0.00</span>
-  `;
-  els.meters.appendChild(row);
-  meterFill = row.querySelector('.fill');
-  meterVal = row.querySelector('.val');
+  for (let c = 0; c < CLUSTER_COUNT; c++) {
+    if (clusterEntryIndices[c].length === 0) continue; // マッチするトラックが無いクラスタは表示しない
+    const names = clusterEntryIndices[c].map((i) => mapping.notes[i].name).join(' / ');
+    const row = document.createElement('div');
+    row.className = 'meter-row';
+    row.innerHTML = `
+      <span class="dot" style="background:${CLUSTER_COLORS[c]}"></span>
+      <span>cluster ${c}${names ? ` (${names})` : ''}</span>
+      <span class="track"><span class="fill" style="background:${CLUSTER_COLORS[c]}"></span></span>
+      <span class="val">0.00</span>
+    `;
+    els.meters.appendChild(row);
+    meterFills[c] = row.querySelector('.fill');
+    meterVals[c] = row.querySelector('.val');
+  }
 }
 
 function updateMeters() {
-  if (!meterFill) return;
-  meterFill.style.width = `${Math.min(100, kickEnvelope * 100).toFixed(1)}%`;
-  meterVal.textContent = kickEnvelope.toFixed(2);
+  for (let c = 0; c < CLUSTER_COUNT; c++) {
+    if (!meterFills[c]) continue;
+    meterFills[c].style.width = `${Math.min(100, clusterEnvelope[c] * 100).toFixed(1)}%`;
+    meterVals[c].textContent = clusterEnvelope[c].toFixed(2);
+  }
 }
 
 // ============================================================
@@ -245,18 +268,18 @@ const bgVertexShader = `
   }
 `;
 
-// maskMap の r チャンネルは、その画素が輝度マップに含まれる重み(0-1)。
-// マップが0の場所は写真のまま変化しない。
+// maskMap のRGBA各チャンネルは、その画素がクラスタ0〜3それぞれに含まれる重み(0-1)。
+// 1画素が複数クラスタに属することも許容する（重なりがあれば単純加算）。
+// マップが全チャンネル0の場所は写真のまま変化しない。
 // ambient breathing（MIDIが無い間の自動揺らぎ）は検証を単純化するためいったん
 // オミットしている。その代わり baseLevel という定数のベースラインだけを残している:
 // マイナス方向にすると、マップが乗っている場所は待機中は元の写真より暗く沈み、
-// KICKが来たときだけそこから持ち上がる（明るさの差が出て「効いている」のが見やすい）。
-// 0ならこれまで通りKICKのNote Onだけが明るさを動かす最小構成に戻る。
+// 対応するクラスタのNote Onが来たときだけそこから持ち上がる。
 const bgFragmentShader = `
   precision mediump float;
   uniform sampler2D map;
   uniform sampler2D maskMap;
-  uniform float kickEnvelope;
+  uniform vec4 clusterEnvelope;
   uniform float baseLevel;
   uniform float brightGain;
   varying vec2 vUv;
@@ -266,25 +289,39 @@ const bgFragmentShader = `
   void main() {
     vec4 tex = texture2D(map, vUv);
     vec3 base = srgbToLinear(tex.rgb);
-    float weight = texture2D(maskMap, vUv).r;
+    vec4 w = texture2D(maskMap, vUv); // r,g,b,a = cluster0..3の重み
 
-    // baseLevel（通常は0以下）が待機中の基準を沈め、KICKのエンベロープ
-    // (0以上、ノートオンで立ち上がる)がそこから明るさを持ち上げる。
-    float delta = weight * (baseLevel + kickEnvelope);
+    // baseLevel（通常は0以下）は画素が属するクラスタの重み合計ぶんだけ待機中の基準を
+    // 沈める。各クラスタのエンベロープ(0以上、ノートオンで立ち上がる)は、そのクラスタの
+    // 重みが乗っている場所だけ加算で明るさを持ち上げる。
+    float totalWeight = clamp(w.r + w.g + w.b + w.a, 0.0, 1.0);
+    float envSum = dot(w, clusterEnvelope);
+    float delta = totalWeight * baseLevel + envSum;
 
     float factor = clamp(1.0 + brightGain * delta, 0.06, 3.5);
     gl_FragColor = vec4(base * factor, tex.a);
   }
 `;
 
-function makeEmptyMaskTexture() {
-  const c = document.createElement('canvas');
-  c.width = 2; c.height = 2;
-  const tex = new THREE.CanvasTexture(c);
+// マスクは<canvas>/CanvasTextureではなく生のUint8ArrayからTHREE.DataTextureを作る。
+// 2DキャンバスはGPU寄りの実装だと内部でpremultiplied alphaとして画素を保持することが
+// あり、アルファ0の画素はRGBも0に潰れてしまう（このプロジェクトで実際に踏んだバグ。
+// R1チャンネルだけの単一クラスタ時代はアルファを全画素255にする回避策で対処したが、
+// 4クラスタ化でアルファチャンネル自体が実データ＝cluster3の重みになる今、その回避策は
+// 使えない）。DataTextureは生バイト列をそのままアップロードするだけで、この往復が
+// 一切発生しないため、4チャンネルとも安全にデータとして使える。
+function makeMaskTexture(data, w, h) {
+  const tex = new THREE.DataTexture(data, w, h, THREE.RGBAFormat, THREE.UnsignedByteType);
+  tex.flipY = true; // 写真側の通常のTexture（flipY既定true）と向きを揃える
   tex.generateMipmaps = false;
   tex.magFilter = THREE.LinearFilter;
   tex.minFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
   return tex;
+}
+
+function makeEmptyMaskTexture() {
+  return makeMaskTexture(new Uint8Array(4), 1, 1); // 1x1・全チャンネル0＝どこにも重みが無い
 }
 
 function setBackground(source, width, height) {
@@ -301,13 +338,13 @@ function setBackground(source, width, height) {
   texture.needsUpdate = true;
 
   // ジオメトリは写真自身のアスペクト比のまま（歪みなし）。16:9出力フレームへの
-  // カバーフィット（はみ出た分をクロップ）は resize() 側で bgMesh.scale を掛けて行う。
+  // コンテインフィット（黒帯・クロップ無し）は resize() 側で bgMesh.scale を掛けて行う。
   const geometry = new THREE.PlaneGeometry(currentAspect * 2, 2);
   const material = new THREE.ShaderMaterial({
     uniforms: {
       map: { value: texture },
       maskMap: { value: makeEmptyMaskTexture() },
-      kickEnvelope: { value: 0 },
+      clusterEnvelope: { value: new THREE.Vector4(0, 0, 0, 0) },
       baseLevel: { value: baseLevelUniformValue },
       brightGain: { value: brightGainUniformValue },
     },
@@ -320,26 +357,26 @@ function setBackground(source, width, height) {
   resize();
 }
 
-function applyMaskCanvas(maskCanvas) {
+function applyMaskData(data, w, h) {
   if (!bgMesh) return;
-  const tex = new THREE.CanvasTexture(maskCanvas);
-  tex.generateMipmaps = false;
-  tex.magFilter = THREE.LinearFilter;
-  tex.minFilter = THREE.LinearFilter;
+  const tex = makeMaskTexture(data, w, h);
   bgMesh.material.uniforms.maskMap.value?.dispose();
   bgMesh.material.uniforms.maskMap.value = tex;
 }
 
 // ============================================================
 // Luminance map extraction（要件定義書 §4 の簡易版・ブラウザ内実装）
-// クラスタ分けはいったん無し。検出した画素はすべて同じ1チャンネルの重みマップに
-// 書き込み、KICKトラックのエンベロープで一律に明滅させる。
+// 検出した画素を4クラスタ（RGBAチャンネル）に振り分けて重みマップに書き込み、
+// 各クラスタに紐づくトラックのエンベロープでそれぞれ明滅させる。
 //
 // 以前は連結成分（塊）検出をしてから重みを付けていたが、閾値の位置次第で
 // 「塊はできるのに重みが全部0になる」「塊が画像の半分を覆う」といった
 // 縮退ケースを何度も踏んだ。今は塊検出をやめ、各画素ごとに直接
 // 「その画素自身の輝度」を重みにする。この式は threshold がどこに来ても
 // 数学的に0除算にならず、閾値を超えた画素は必ず何らかの重みを持つ。
+// クラスタの割り当ても同じ理由で塊単位ではなく画素単位: Y位置だけを見た
+// 簡易的な「奥行きの代用」で、画面下ほど手前＝cluster0（config側の
+// KICK=cluster0の慣習に合わせる）、上に行くほど番号の大きいクラスタになる。
 // ============================================================
 
 function extractLuminanceMask(source, naturalW, naturalH, opts) {
@@ -383,48 +420,43 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
     if (cum >= targetCount) { threshold = v; break; }
   }
 
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = w;
-  maskCanvas.height = h;
-  const maskCtx = maskCanvas.getContext('2d');
-  const maskData = maskCtx.createImageData(w, h);
-  // アルファを0のままにすると、ブラウザのcanvas内部表現（premultiplied alpha）が
-  // putImageData/getImageDataの往復やWebGLへのアップロード時にRGBを0に潰してしまう
-  // （alpha=0の画素は色情報が無いものとして扱われるため）。ここではRチャンネルが
-  // 実データなので、全画素のアルファを255（不透明）にしてこれを防ぐ。
-  for (let i = 3; i < maskData.data.length; i += 4) maskData.data[i] = 255;
+  // RGBAの生バッファに直接書き込む（<canvas>のImageData/putImageDataは経由しない）。
+  // 詳しくは makeMaskTexture() 側のコメント参照: 2Dキャンバス経由だとpremultiplied
+  // alphaでRGBが消えるリスクがあるが、Uint8Arrayを直接THREE.DataTextureに渡せば
+  // そのリスクが無い。
+  const maskData = new Uint8Array(n * 4);
 
   let qualifying = 0;
-  for (let i = 0; i < n; i++) {
-    if (luma[i] < threshold) continue;
-    qualifying++;
-    // 重みは画素自身の輝度（0-255を0-1に正規化）で決める。thresholdからの
-    // 距離ではないので、thresholdが255付近になっても0除算的に潰れない。
-    // 最低でも0.35は確保し、閾値ぎりぎりの画素も見えるようにする。
-    const weight = Math.min(1, Math.max(0.35, luma[i] / 255));
-    maskData.data[i * 4] = Math.round(weight * 255); // R channel
+  for (let y = 0; y < h; y++) {
+    const fromBottom = (h - 1 - y) / h; // 0（一番下）〜ほぼ1（一番上）
+    const cluster = Math.min(CLUSTER_COUNT - 1, Math.floor(fromBottom * CLUSTER_COUNT));
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (luma[i] < threshold) continue;
+      qualifying++;
+      // 重みは画素自身の輝度（0-255を0-1に正規化）で決める。thresholdからの
+      // 距離ではないので、thresholdが255付近になっても0除算的に潰れない。
+      // 最低でも0.35は確保し、閾値ぎりぎりの画素も見えるようにする。
+      const weight = Math.min(1, Math.max(0.35, luma[i] / 255));
+      maskData[i * 4 + cluster] = Math.round(weight * 255);
+    }
   }
-  maskCtx.putImageData(maskData, 0, 0);
 
-  return { maskCanvas, coveragePercent: (100 * qualifying) / n, threshold };
+  return { maskData, maskW: w, maskH: h, coveragePercent: (100 * qualifying) / n, threshold };
 }
 
-// 手作業の points.json (mask-editor/ 製) を、同じ1チャンネルの重みマップに焼き直す。
-// points.jsonのcluster値は今は無視し、全ての点を同じ重みマップに含める。
-function pointsToMaskCanvas(points, naturalW, naturalH, maxDim) {
+// 手作業の points.json (mask-editor/ 製) を、同じ4チャンネル(RGBA)の重みマップに焼き直す。
+// mask-editor は0-7のクラスタを持てるが、輝度マップは4チャンネルしか無いので
+// cluster % CLUSTER_COUNT で折り返す（mask-editor自身も色選択で同じ折り返しをしている）。
+function pointsToMaskData(points, naturalW, naturalH, maxDim) {
   const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
   const w = Math.max(1, Math.round(naturalW * scale));
   const h = Math.max(1, Math.round(naturalH * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  const imgData = ctx.createImageData(w, h);
-  // extractLuminanceMask と同じ理由で、アルファを全画素255にしてRチャンネルの
-  // 重みがブラウザのpremultiplied alpha往復で消えないようにする。
-  for (let i = 3; i < imgData.data.length; i += 4) imgData.data[i] = 255;
+  const maskData = new Uint8Array(w * h * 4);
   const radius = Math.max(3, Math.round(Math.min(w, h) * 0.025));
 
   for (const p of points) {
+    const cluster = ((p.cluster ?? 0) % CLUSTER_COUNT + CLUSTER_COUNT) % CLUSTER_COUNT;
     const cx = p.x * w, cy = p.y * h;
     const x0 = Math.max(0, Math.floor(cx - radius));
     const x1 = Math.min(w - 1, Math.ceil(cx + radius));
@@ -435,14 +467,13 @@ function pointsToMaskCanvas(points, naturalW, naturalH, maxDim) {
         const d = Math.hypot(x - cx, y - cy) / radius;
         if (d > 1) continue;
         const weight = Math.pow(1 - d, 1.5);
-        const idx = (y * w + x) * 4; // R channel
+        const idx = (y * w + x) * 4 + cluster;
         const v = Math.round(weight * 255);
-        if (v > imgData.data[idx]) imgData.data[idx] = v;
+        if (v > maskData[idx]) maskData[idx] = v;
       }
     }
   }
-  ctx.putImageData(imgData, 0, 0);
-  return canvas;
+  return { maskData, maskW: w, maskH: h };
 }
 
 // ============================================================
@@ -542,8 +573,8 @@ function runExtraction({ silent = false } = {}) {
     setExtractStatus(`検出: エラー (${err.message})`, 'error');
     return;
   }
-  const { maskCanvas, coveragePercent, threshold } = result;
-  applyMaskCanvas(maskCanvas);
+  const { maskData, maskW, maskH, coveragePercent, threshold } = result;
+  applyMaskData(maskData, maskW, maskH);
   lastMaskInfo = { coveragePercent, threshold };
   const ms = Math.round(performance.now() - t0);
 
@@ -627,8 +658,8 @@ els.pointsInput.addEventListener('change', () => {
     try {
       const data = JSON.parse(reader.result);
       if (!Array.isArray(data.points)) throw new Error('points配列がありません');
-      const maskCanvas = pointsToMaskCanvas(data.points, loadedImageW, loadedImageH, 700);
-      applyMaskCanvas(maskCanvas);
+      const { maskData, maskW, maskH } = pointsToMaskData(data.points, loadedImageW, loadedImageH, 700);
+      applyMaskData(maskData, maskW, maskH);
       setExtractStatus(`検出: 手動データ ${data.points.length}点を使用中`, null);
       showToast(`光点データからマップを生成しました（自動抽出を上書き）: ${data.points.length}点`, 'ok');
     } catch (err) {
@@ -664,11 +695,13 @@ function setStatus(text, kind) {
 }
 
 // Note Onを受けたのと同じ処理。実MIDIからも、下のデバッグボタンからも呼ぶ。
+// kickEntryIndices は mapping.notes と同じindex空間なので、clusterNoteEnvelopes に
+// 直接書き込めば、それがどのクラスタに属していても tick() 側で自然に拾われる。
 function triggerKick(velocity) {
   const now = performance.now() / 1000;
   kickEntryIndices.forEach((i) => {
-    kickNoteEnvelopes[i].value = velocity / 127;
-    kickNoteEnvelopes[i].start = now;
+    clusterNoteEnvelopes[i].value = velocity / 127;
+    clusterNoteEnvelopes[i].start = now;
   });
 }
 
@@ -681,11 +714,11 @@ function onMIDIMessage(msg) {
   const d2 = data[2];
 
   if (type === 0x90 && d2 > 0) {
-    kickEntryIndices.forEach((i) => {
-      const n = mapping.notes[i];
-      if (n.channel === ch && n.note === d1) {
-        kickNoteEnvelopes[i].value = d2 / 127;
-        kickNoteEnvelopes[i].start = performance.now() / 1000;
+    // 全 cluster_trigger エントリを見る（kickEntryIndicesはデバッグボタン専用）。
+    mapping.notes.forEach((n, i) => {
+      if (n.role === 'cluster_trigger' && n.channel === ch && n.note === d1) {
+        clusterNoteEnvelopes[i].value = d2 / 127;
+        clusterNoteEnvelopes[i].start = performance.now() / 1000;
       }
     });
   } else if (type === 0xb0) {
@@ -784,18 +817,23 @@ function tick() {
   requestAnimationFrame(tick);
   const now = performance.now() / 1000;
 
-  kickEnvelope = 0;
-  kickEntryIndices.forEach((i) => {
-    const n = mapping.notes[i];
-    const e = kickNoteEnvelopes[i];
-    if (e.start === 0) return;
-    const v = e.value * Math.exp(-(now - e.start) / (n.tau || 0.15));
-    if (v > kickEnvelope) kickEnvelope = v;
-  });
+  for (let c = 0; c < CLUSTER_COUNT; c++) {
+    let maxV = 0;
+    clusterEntryIndices[c].forEach((i) => {
+      const n = mapping.notes[i];
+      const e = clusterNoteEnvelopes[i];
+      if (e.start === 0) return;
+      const v = e.value * Math.exp(-(now - e.start) / (n.tau || 0.15));
+      if (v > maxV) maxV = v;
+    });
+    clusterEnvelope[c] = maxV;
+  }
   updateMeters();
 
   if (bgMesh) {
-    bgMesh.material.uniforms.kickEnvelope.value = kickEnvelope;
+    bgMesh.material.uniforms.clusterEnvelope.value.set(
+      clusterEnvelope[0], clusterEnvelope[1], clusterEnvelope[2], clusterEnvelope[3]
+    );
     render();
   }
 }

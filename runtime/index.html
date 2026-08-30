@@ -23,7 +23,7 @@
       <h1>Night Light VJ</h1>
       <span class="phase-tag">Phase 1</span>
     </div>
-    <p class="sub">写真の輝度マップに応じて、写真そのものの明るさをKICKに連動させて上げ下げする。個別の光点は打たず、クラスタ分けも無い最小構成。カメラは固定。</p>
+    <p class="sub">写真の輝度マップに応じて、写真そのものの明るさをMIDIトラックに連動させて上げ下げする。個別の光点は打たず、検出した場所を4クラスタに振り分けてトラックごとに明滅させる。カメラは固定。</p>
 
     <div class="section">
       <p class="panel-label">Scene</p>
@@ -53,11 +53,12 @@
       <p class="hint" id="extract-status">検出: -</p>
       <p class="hint">
         画素ごとに直接、輝度をそのまま重みにしてマップに書き込む（塊検出はしない）。
-        クラスタ分けは無く、マップ全体がKICKトラックのNote Onに連動して一律に明滅する
-        （<code>config/midi-mapping.json</code> の name="KICK" のトラックを見る。
-        無ければ cluster_trigger 全体をKICK扱いにする）。
+        検出した画素は画面のY位置だけで4クラスタ(0-3)に振り分ける（下ほど手前＝
+        cluster0、上に行くほど番号が大きくなる）。各クラスタは
+        <code>config/midi-mapping.json</code> の同じ <code>cluster</code> 番号を持つ
+        <code>cluster_trigger</code> トラックに連動する。
         <code>mask-editor/</code> で作った <code>points.json</code> を下の欄で読み込むと、
-        自動抽出の代わりにその点群からマップを作る。
+        自動抽出の代わりにその点群（各点のcluster指定つき）からマップを作る。
       </p>
       <div class="row">
         <label for="points-input">光点データ（手動、任意）</label>
@@ -78,16 +79,17 @@
     </div>
 
     <div class="section">
-      <p class="panel-label">Kick Envelope</p>
+      <p class="panel-label">Cluster Envelopes</p>
       <div id="meters"></div>
       <div class="row" style="margin-top:10px;">
         <button id="debug-kick-btn">デバッグ: KICKを疑似発火</button>
       </div>
       <p class="hint">
-        実際にNote Onを受信したのと同じ処理を呼ぶ（velocity=100）。SEQTRAKが無くても、
-        MIDI受信側の問題か描画側の問題かを切り分けられる。これを押してメーターだけ動いて
-        画面が変化しなければ描画側、これでも画面が変化するのに実機のKICKで変化しなければ
-        MIDI受信側（config/midi-mapping.jsonのchannel/noteが実機と不一致等）を疑う。
+        実際にNote Onを受信したのと同じ処理を呼ぶ（velocity=100、name="KICK"のトラック
+        ＝cluster0向け）。SEQTRAKが無くても、MIDI受信側の問題か描画側の問題かを
+        切り分けられる。これを押してメーターだけ動いて画面が変化しなければ描画側、
+        これでも画面が変化するのに実機のKICKで変化しなければMIDI受信側
+        （config/midi-mapping.jsonのchannel/noteが実機と不一致等）を疑う。
       </p>
     </div>
 
@@ -102,10 +104,11 @@
         <input type="range" id="base-level" min="-1" max="0" step="0.01" value="0">
       </div>
       <p class="hint">
-        輝度マップの値が乗っている場所だけ、MIDIノートに応じて元の写真の明るさを上げる
-        （マップが0の場所は写真のまま変化しない）。<code>base level</code> をマイナスに
-        すると、マップが乗っている場所は待機中は元の写真より暗く沈み、KICKが来たときだけ
-        そこから明るく持ち上がるようになる（0なら待機中は写真のまま静止）。
+        輝度マップの値が乗っている場所だけ、対応するクラスタのMIDIノートに応じて
+        元の写真の明るさを上げる（マップが0の場所は写真のまま変化しない）。
+        <code>base level</code> をマイナスにすると、マップが乗っている場所は待機中は
+        元の写真より暗く沈み、そのクラスタのノートが来たときだけそこから明るく
+        持ち上がるようになる（0なら待機中は写真のまま静止）。
         ambient breathing（MIDIが無い間の自動揺らぎ）は検証を単純化するためいったん
         オミットしている。
       </p>
@@ -158,13 +161,13 @@
   <main id="viewport">
     <div class="viewport-empty" id="viewport-empty">
       左のパネルから写真を読み込むか、「サンプルを読み込む」で試してください。<br>
-      SEQTRAKでKICKを鳴らすと、輝度マップの場所が一律に明滅します。
+      SEQTRAKで各トラックを鳴らすと、対応するクラスタの輝度マップの場所が明滅します。
     </div>
   </main>
 </div>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="main.js?v=21"></script>
+<script type="module" src="main.js?v=22"></script>
 </body>
 </html>
