@@ -19,11 +19,14 @@
 // 本物の深度マップ（batch/の出力やPNGの手動読み込み）に差し替える際もその関数の中身だけ
 // 変えればよい設計にしてある。
 //
-// Google Photos連携（実験的）: アルバムから選んだ写真群を次々自動表示するスライドショー。
-// Google Photos Picker API（Googleのピッカー画面でユーザーがその都度選び直す方式。バック
-// グラウンドでの新着自動監視はAPIの仕様上不可）とGoogle Identity Servicesでブラウザ内だけで
-// 完結させている。切り替えは一定時間ごとの自動タイマーと、role: scene_cut（SAMPLERトラック）
-// のMIDI Note Onの両方に対応（詳細は runtime/README.md「Google Photos連携」参照）。
+// Google Photos連携（実験的）: 選んだ写真群を次々自動表示するスライドショー。
+// Google Photos Picker API（Googleのピッカー画面でユーザーが選ぶ方式。バックグラウンドでの
+// 新着自動監視や「アルバムをまるごと選ぶ」はAPIの仕様上不可）とGoogle Identity Servicesで
+// ブラウザ内だけで完結させている。選んだセッションは7日間有効なので、セッションIDだけを
+// 保存しておけば次回ログイン時に選び直し不要で自動復元される
+// （tryRestoreSavedGooglePickerSession()）。切り替えは一定時間ごとの自動タイマーと、
+// role: scene_cut（SAMPLERトラック）のMIDI Note Onの両方に対応
+// （詳細は runtime/README.md「Google Photos連携」参照）。
 
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -46,6 +49,7 @@ const els = {
   googleClientId: document.getElementById('google-client-id'),
   googleLoginBtn: document.getElementById('google-login-btn'),
   googlePickBtn: document.getElementById('google-pick-btn'),
+  googleClearBtn: document.getElementById('google-clear-btn'),
   googleStatus: document.getElementById('google-status'),
   googleStatusDot: document.getElementById('google-status-dot'),
   slideshowAutoToggle: document.getElementById('slideshow-auto-toggle'),
@@ -1031,12 +1035,61 @@ function deletePickerSessionBestEffort(sessionId) {
   }).catch(() => {});
 }
 
+// ピッカーで一度選んだ写真セットを、毎回選び直さずに済むようにする仕組み。
+// Picker APIのセッションは選択後も7日間有効で（作成時に返るexpireTime参照）、その間は
+// 同じsessionIdで mediaItems.list を呼び直すだけで（ピッカー画面を再度開かずに）選択済みの
+// 写真一覧と新しいbaseUrlを取得できる。セッションIDだけをlocalStorageに保存しておき
+// （写真データそのものではなく、7日間は再利用可能な識別子だけを保存）、次回訪問時に
+// 「Googleでログイン」した直後、自動でこの復元を試す。セッションが7日を過ぎて失効していれば
+// listPickerMediaItems() がエラーになるので、そのときだけ改めて「写真を選ぶ」を促す。
+const GOOGLE_PICKER_SESSION_STORAGE_KEY = 'nightlightvj_google_picker_session';
+
+function saveGooglePickerSessionId(sessionId) {
+  localStorage.setItem(GOOGLE_PICKER_SESSION_STORAGE_KEY, JSON.stringify({ sessionId }));
+}
+
+function clearSavedGooglePickerSession() {
+  localStorage.removeItem(GOOGLE_PICKER_SESSION_STORAGE_KEY);
+}
+
+// ログイン直後に自動で呼ぶ。保存済みセッションが無い/失効していれば何もせず戻る
+// （エラー扱いにはしない。単に「写真を選ぶ」を押すのを待つだけの通常状態）。
+async function tryRestoreSavedGooglePickerSession() {
+  let saved;
+  try {
+    saved = JSON.parse(localStorage.getItem(GOOGLE_PICKER_SESSION_STORAGE_KEY) || 'null');
+  } catch {
+    saved = null;
+  }
+  if (!saved?.sessionId) return false;
+
+  try {
+    setGoogleStatus('保存済みの選択を復元中…');
+    const items = await listPickerMediaItems(saved.sessionId);
+    if (items.length === 0) throw new Error('保存済みの選択に写真がありません');
+    googlePhotoQueue = items;
+    googlePhotoIndex = -1;
+    await advanceSlideshow(1);
+    restartSlideshowTimer();
+    showToast(`保存済みの選択から${items.length}枚を復元しました`, 'ok');
+    return true;
+  } catch (err) {
+    // 7日経過による失効、またはユーザーがGoogle側でアクセスを取り消した等。よくあることなので
+    // エラーtoastは出さず、ステータス行で「選び直してください」とだけ案内する。
+    console.warn('保存済みのGoogle Photosセッションを復元できませんでした（期限切れの可能性）:', err);
+    clearSavedGooglePickerSession();
+    setGoogleStatus('保存済みの選択が見つからない/期限切れです。「写真を選ぶ」で選択してください', 'pending');
+    return false;
+  }
+}
+
 els.googleLoginBtn.addEventListener('click', async () => {
   try {
     setGoogleStatus('ログイン中…');
     await googleLogin();
-    setGoogleStatus('ログイン済み', 'ok');
     els.googlePickBtn.disabled = false;
+    const restored = await tryRestoreSavedGooglePickerSession();
+    if (!restored) setGoogleStatus('ログイン済み。「写真を選ぶ」から選択してください', 'ok');
   } catch (err) {
     console.error(err);
     setGoogleStatus(`エラー: ${err.message}`, 'error');
@@ -1053,19 +1106,21 @@ els.googlePickBtn.addEventListener('click', async () => {
     setGoogleStatus('ピッカーセッションを作成中…');
     const session = await createPickerSession();
     window.open(session.pickerUri, '_blank', 'noopener');
-    setGoogleStatus('Googleの画面で写真/アルバムを選んでください…');
+    setGoogleStatus('Googleの画面で写真を選んでください…');
     await pollPickerSessionUntilDone(session.id);
     setGoogleStatus('選択結果を取得中…');
     const items = await listPickerMediaItems(session.id);
-    deletePickerSessionBestEffort(session.id);
     if (items.length === 0) {
       setGoogleStatus('写真が選択されませんでした', 'error');
       showToast('写真が選択されませんでした', 'error');
       return;
     }
+    // セッションはここでは削除しない（7日間、選び直し無しで再利用するため。
+    // 詳しくは tryRestoreSavedGooglePickerSession() のコメント参照）。
+    saveGooglePickerSessionId(session.id);
     googlePhotoQueue = items;
     googlePhotoIndex = -1;
-    showToast(`Googleフォトから${items.length}枚読み込みました`, 'ok');
+    showToast(`Googleフォトから${items.length}枚読み込みました（この選択は7日間、次回ログイン時も自動で復元されます）`, 'ok');
     await advanceSlideshow(1);
     restartSlideshowTimer();
   } catch (err) {
@@ -1073,6 +1128,22 @@ els.googlePickBtn.addEventListener('click', async () => {
     setGoogleStatus(`エラー: ${err.message}`, 'error');
     showToast(`Google連携エラー: ${err.message}`, 'error');
   }
+});
+
+els.googleClearBtn.addEventListener('click', () => {
+  let saved;
+  try {
+    saved = JSON.parse(localStorage.getItem(GOOGLE_PICKER_SESSION_STORAGE_KEY) || 'null');
+  } catch {
+    saved = null;
+  }
+  clearSavedGooglePickerSession();
+  if (saved?.sessionId && googleAccessToken) deletePickerSessionBestEffort(saved.sessionId);
+  googlePhotoQueue = [];
+  googlePhotoIndex = -1;
+  stopSlideshowTimer();
+  setGoogleStatus(googleAccessToken ? 'ログイン済み。「写真を選ぶ」から選択してください' : '未ログイン', googleAccessToken ? 'ok' : 'pending');
+  showToast('Google Photosの選択をクリアしました', 'ok');
 });
 
 // キューの写真を1枚読み込んで現在の背景に反映する（direction分だけインデックスを進める。

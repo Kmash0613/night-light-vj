@@ -50,6 +50,7 @@
       <div class="row">
         <button id="google-login-btn">Googleでログイン</button>
         <button id="google-pick-btn" disabled>写真を選ぶ</button>
+        <button id="google-clear-btn">選択をクリア</button>
       </div>
       <div class="status-line">
         <span class="status-dot pending" id="google-status-dot"></span>
@@ -73,13 +74,15 @@
       </div>
       <p class="hint">
         Googleフォトの「常時バックグラウンド監視」はAPIの制約上できないため、「写真を選ぶ」を
-        押すたびにGoogle純正のピッカー画面で選び直す方式（選んだ一覧はこのタブを閉じるまで
-        セッション内で使い回す）。<strong>ピッカー画面に「アルバムをまるごと選ぶ」ボタンは無い</strong>
-        （Google Photos Picker API自体の仕様）。特定のアルバムから選びたい場合は、ピッカー画面内の
-        検索バーにアルバム名を入力して絞り込み、出てきた写真をまとめて複数選択する（選択枚数に
-        上限は無い）。クライアントIDの取得方法は <code>runtime/README.md</code> の
-        「Google Photos連携」を参照。写真データはブラウザからGoogleへ直接リクエストされ、
-        どこか別のサーバーを経由することはない。
+        押すとGoogle純正のピッカー画面で選ぶ形になる。<strong>ピッカー画面に「アルバムをまるごと
+        選ぶ」ボタンは無い</strong>（Google Photos Picker API自体の仕様）。特定のアルバムから
+        選びたい場合は、ピッカー画面内の検索バーにアルバム名を入力して絞り込み、出てきた写真を
+        まとめて複数選択する（選択枚数に上限は無い）。<strong>一度選べば、その選択は7日間
+        有効</strong>で、次回このページを開いて「Googleでログイン」するだけで自動的に同じ写真
+        セットが復元される（ピッカー画面を開き直す必要はない）。選び直したいときは「選択を
+        クリア」を押してから「写真を選ぶ」。クライアントIDの取得方法は
+        <code>runtime/README.md</code> の「Google Photos連携」を参照。写真データはブラウザから
+        Googleへ直接リクエストされ、どこか別のサーバーを経由することはない。
       </p>
     </div>
 
@@ -242,6 +245,6 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="main.js?v=26"></script>
+<script type="module" src="main.js?v=27"></script>
 </body>
 </html>

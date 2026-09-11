@@ -64,8 +64,10 @@ Web MIDI API はローカルにファイルを置くか、通常のWebサーバ�
      または「Google Photos」パネルからGoogleアカウントでログインし、「写真を選ぶ」で
      Googleフォトの写真群を選んで自動スライドショー表示することもできる（一定時間ごとの
      自動切り替えと、`role: scene_cut`＝SAMPLERトラックのMIDI Note Onでの切り替えの両方に対応。
-     初回セットアップと、Google Photos Picker API自体の仕様上「アルバムをまとめて選ぶ」
-     ボタンが無いことの詳細は `runtime/README.md`「Google Photos連携」参照）
+     一度選べば7日間は次回ログイン時に自動で同じ写真セットが復元されるので、選び直しは
+     基本的に週1回で済む。初回セットアップと、Google Photos Picker API自体の仕様上
+     「アルバムをまとめて選ぶ」ボタンが無いこと・共有アルバムの公開設定でも代用できないことの
+     詳細は `runtime/README.md`「Google Photos連携」参照）
    - 読み込むと同時に、写真の輝度が高い場所（ネオン等）から「輝度マップ」を自動生成する
      （「Auto Extract」パネル）。`top %` を変えて「再抽出」で調整できる
    - SEQTRAKで各トラックを鳴らすと、そのトラックの `cluster` 番号に対応するマップ上の場所が
