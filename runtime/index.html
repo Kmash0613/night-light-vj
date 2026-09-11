@@ -7,7 +7,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
 <link rel="stylesheet" href="style.css?v=16">
-<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script type="importmap">
 {
   "imports": {
@@ -42,19 +41,19 @@
     </div>
 
     <div class="section">
-      <p class="panel-label">Google Photos（スライドショー）</p>
+      <p class="panel-label">Dropbox（スライドショー）</p>
       <div class="row">
-        <label for="google-client-id">OAuth クライアントID</label>
-        <input type="text" id="google-client-id" placeholder="xxxxxxxx.apps.googleusercontent.com">
+        <label for="dropbox-app-key">アプリキー</label>
+        <input type="text" id="dropbox-app-key" placeholder="Dropbox App Console で発行したApp key">
       </div>
       <div class="row">
-        <button id="google-login-btn">Googleでログイン</button>
-        <button id="google-pick-btn" disabled>写真を選ぶ</button>
-        <button id="google-clear-btn">選択をクリア</button>
+        <button id="dropbox-login-btn">Dropboxでログイン</button>
+        <button id="dropbox-load-btn" disabled>フォルダを読み込む</button>
+        <button id="dropbox-clear-btn">ログアウト</button>
       </div>
       <div class="status-line">
-        <span class="status-dot pending" id="google-status-dot"></span>
-        <span id="google-status" class="status-text pending">未ログイン</span>
+        <span class="status-dot pending" id="dropbox-status-dot"></span>
+        <span id="dropbox-status" class="status-text pending">未ログイン</span>
       </div>
       <label class="checkbox">
         <input type="checkbox" id="slideshow-auto-toggle" checked>
@@ -73,16 +72,15 @@
         <button id="slideshow-next-btn">次へ ▶</button>
       </div>
       <p class="hint">
-        Googleフォトの「常時バックグラウンド監視」はAPIの制約上できないため、「写真を選ぶ」を
-        押すとGoogle純正のピッカー画面で選ぶ形になる。<strong>ピッカー画面に「アルバムをまるごと
-        選ぶ」ボタンは無い</strong>（Google Photos Picker API自体の仕様）。特定のアルバムから
-        選びたい場合は、ピッカー画面内の検索バーにアルバム名を入力して絞り込み、出てきた写真を
-        まとめて複数選択する（選択枚数に上限は無い）。<strong>一度選べば、その選択は7日間
-        有効</strong>で、次回このページを開いて「Googleでログイン」するだけで自動的に同じ写真
-        セットが復元される（ピッカー画面を開き直す必要はない）。選び直したいときは「選択を
-        クリア」を押してから「写真を選ぶ」。クライアントIDの取得方法は
-        <code>runtime/README.md</code> の「Google Photos連携」を参照。写真データはブラウザから
-        Googleへ直接リクエストされ、どこか別のサーバーを経由することはない。
+        Dropboxの「アプリフォルダ」（<code>Apps/&lt;アプリ名&gt;/</code>）だけを読み込む。
+        それ以外のDropbox全体にはアクセスしない。スマホ等のDropboxアプリでこのフォルダに
+        写真を移動/コピーしておけば、そのフォルダの中身がまるごと（サブフォルダも含めて）
+        スライドショューの対象になる。ログインは初回だけでよく、以降はアクセストークンが
+        自動更新されるため毎回ログインし直す必要はない（Google Photosの7日制限のような
+        期限も無い）。新しい写真を追加した後は「フォルダを読み込む」で再取得する。
+        セットアップ手順は <code>runtime/README.md</code> の「Dropbox連携」を参照。
+        写真データはブラウザからDropboxへ直接リクエストされ、どこか別のサーバーを
+        経由することはない。
       </p>
     </div>
 
@@ -245,6 +243,6 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="main.js?v=27"></script>
+<script type="module" src="main.js?v=28"></script>
 </body>
 </html>

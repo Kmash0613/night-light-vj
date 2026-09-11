@@ -19,14 +19,14 @@
 // 本物の深度マップ（batch/の出力やPNGの手動読み込み）に差し替える際もその関数の中身だけ
 // 変えればよい設計にしてある。
 //
-// Google Photos連携（実験的）: 選んだ写真群を次々自動表示するスライドショー。
-// Google Photos Picker API（Googleのピッカー画面でユーザーが選ぶ方式。バックグラウンドでの
-// 新着自動監視や「アルバムをまるごと選ぶ」はAPIの仕様上不可）とGoogle Identity Servicesで
-// ブラウザ内だけで完結させている。選んだセッションは7日間有効なので、セッションIDだけを
-// 保存しておけば次回ログイン時に選び直し不要で自動復元される
-// （tryRestoreSavedGooglePickerSession()）。切り替えは一定時間ごとの自動タイマーと、
-// role: scene_cut（SAMPLERトラック）のMIDI Note Onの両方に対応
-// （詳細は runtime/README.md「Google Photos連携」参照）。
+// Dropbox連携（実験的）: アプリフォルダから選んだ写真群を次々自動表示するスライドショー。
+// Google Photosは断念した（共有アルバムAPIの全廃止・Picker APIに一括選択機能が無い・
+// 選択セッションが7日で失効、という3つの制約が重なったため）。Dropboxのアプリフォルダ
+// （Apps/<アプリ名>/、それ以外のDropboxには一切アクセスしない）配下をまるごと一覧取得する
+// 方式に切り替えている。OAuth PKCE（サーバー・シークレット不要）で長期間有効な
+// refresh_tokenを取得するので、一度ログインすれば以降はクリック無しで自動復元される。
+// 切り替えは一定時間ごとの自動タイマーと、role: scene_cut（SAMPLERトラック）のMIDI Note On
+// の両方に対応（詳細は runtime/README.md「Dropbox連携」参照）。
 
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -46,12 +46,12 @@ const els = {
   photoInput: document.getElementById('photo-input'),
   pointsInput: document.getElementById('points-input'),
   sampleBtn: document.getElementById('sample-btn'),
-  googleClientId: document.getElementById('google-client-id'),
-  googleLoginBtn: document.getElementById('google-login-btn'),
-  googlePickBtn: document.getElementById('google-pick-btn'),
-  googleClearBtn: document.getElementById('google-clear-btn'),
-  googleStatus: document.getElementById('google-status'),
-  googleStatusDot: document.getElementById('google-status-dot'),
+  dropboxAppKey: document.getElementById('dropbox-app-key'),
+  dropboxLoginBtn: document.getElementById('dropbox-login-btn'),
+  dropboxLoadBtn: document.getElementById('dropbox-load-btn'),
+  dropboxClearBtn: document.getElementById('dropbox-clear-btn'),
+  dropboxStatus: document.getElementById('dropbox-status'),
+  dropboxStatusDot: document.getElementById('dropbox-status-dot'),
   slideshowAutoToggle: document.getElementById('slideshow-auto-toggle'),
   slideshowInterval: document.getElementById('slideshow-interval'),
   slideshowIntervalVal: document.getElementById('slideshow-interval-val'),
@@ -902,274 +902,294 @@ els.sampleBtn.addEventListener('click', () => {
 });
 
 // ============================================================
-// Google Photos連携（Googleフォトからのスライドショー、実験的）
+// Dropbox連携（アプリフォルダからのスライドショー、実験的）
 //
-// Google Photos Library APIの写真一覧系スコープは2025年に廃止されたため、「バックグラウンドで
-// アルバムを監視して新着を自動取得」はAPIの仕様上できない。代わりに Google Photos Picker API
-// （https://photospicker.googleapis.com）を使う: 「写真を選ぶ」を押すたびにGoogle純正の
-// ピッカー画面（別タブ）が開き、ユーザーがそこで写真を選び直す方式。選んだ一覧は
-// セッション内（このタブを閉じるまで）使い回せる。ピッカー画面には「アルバムをまるごと選ぶ」
-// ボタンは無く（Picker API自体の仕様）、特定のアルバムから選びたい場合はピッカー内の検索バーで
-// アルバム名などを検索して絞り込み、そこから複数選択する形になる。認証はGoogle Identity
-// Services（GIS）のトークンクライアントでブラウザ側だけで完結させ（サーバー不要、クライアント
-// シークレット不要）、写真本体もブラウザから直接Googleにリクエストする（どこにもアップロード/
-// 経由しない）。
-// クライアントIDの取得手順は runtime/README.md 参照。
+// Google Photosはこのプロジェクトでは断念した: (1) 共有アルバム系APIが2025年3月末で全廃止
+// （403 PERMISSION_DENIED、審査済みアプリでも復活しない）、(2) Picker API自体にも
+// 「アルバムをまるごと選ぶ」機能が無く個別選択が必須、(3) 選択セッションも7日で失効し
+// 定期的な選び直しが必要、という3つの制約が重なり、要望の「アルバム単位で一括指定」を
+// 満たせなかったため。
+//
+// Dropboxは「アプリフォルダ」（Apps/<アプリ名>/、Dropbox側が自動で作る専用フォルダ）に
+// スコープを絞った権限があり、それ以外のDropbox全体には一切アクセスできない
+// （＝要望の「あるディレクトリにまとめたものだけ」を素直に満たせる）。スマホのDropboxアプリで
+// このフォルダに写真を移動/コピーしておけば、その中身がまるごとスライドショューの対象になる
+// （フォルダ一覧はワンリクエストで取得でき、Google Picker APIのような個別タップ選択は不要）。
+// 認証はOAuth 2.0 PKCE（サーバー・クライアントシークレット不要、ブラウザ単体で完結する
+// public client向けフロー）。offlineアクセスで長期間有効なrefresh_tokenを取得するので、
+// Google Photosの7日制限のような期限切れも無く、一度ログインすれば以降は自動でアクセス
+// トークンを更新し続ける。
+// セットアップ手順は runtime/README.md「Dropbox連携」参照。
 // ============================================================
 
-const GOOGLE_PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
-const GOOGLE_CLIENT_ID_STORAGE_KEY = 'nightlightvj_google_client_id';
-const GOOGLE_PHOTO_DOWNLOAD_MAX_DIM = 2048; // baseUrlから取得する画像の最大辺（元画像が大きくてもここで頭打ち）
+const DROPBOX_APP_KEY_STORAGE_KEY = 'nightlightvj_dropbox_app_key';
+const DROPBOX_REFRESH_TOKEN_STORAGE_KEY = 'nightlightvj_dropbox_refresh_token';
+const DROPBOX_CODE_VERIFIER_SESSION_KEY = 'nightlightvj_dropbox_code_verifier';
+const DROPBOX_IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|gif)$/i;
 
-let googleTokenClient = null;
-let googleAccessToken = null;
-let googlePhotoQueue = []; // Picker APIの mediaItems（{id, mediaFile:{baseUrl,filename,mediaFileMetadata:{width,height}}}）
-let googlePhotoIndex = -1;
+let dropboxAccessToken = null;
+let dropboxAccessTokenExpiresAt = 0; // epoch ms。この時刻を過ぎたら使う前に必ず更新する
+let dropboxPhotoQueue = []; // アプリフォルダ内の画像一覧（{path, name}）
+let dropboxPhotoIndex = -1;
 let slideshowTimerId = null;
 let slideshowIntervalSec = 12;
 let slideshowAutoEnabled = true;
 let slideshowMidiEnabled = true;
 
-function setGoogleStatus(text, kind) {
-  els.googleStatus.textContent = text;
-  els.googleStatus.className = `status-text ${kind || 'pending'}`;
-  els.googleStatusDot.className = `status-dot ${kind || 'pending'}`;
+function setDropboxStatus(text, kind) {
+  els.dropboxStatus.textContent = text;
+  els.dropboxStatus.className = `status-text ${kind || 'pending'}`;
+  els.dropboxStatusDot.className = `status-dot ${kind || 'pending'}`;
 }
 
-// index.htmlで<script src="https://accounts.google.com/gsi/client">を読み込んでいるが、
-// async defer なのでDOMContentLogin後もまだ未初期化な場合があるため、使う直前にポーリング待機する。
-function waitForGis(timeoutMs = 10000) {
-  return new Promise((resolve, reject) => {
-    if (window.google?.accounts?.oauth2) { resolve(); return; }
-    const start = performance.now();
-    const check = () => {
-      if (window.google?.accounts?.oauth2) { resolve(); return; }
-      if (performance.now() - start > timeoutMs) {
-        reject(new Error('Google Identity Servicesの読み込みに失敗しました（ネットワーク接続を確認してください）'));
-        return;
-      }
-      setTimeout(check, 100);
-    };
-    check();
-  });
+// ---- PKCE (RFC 7636) ヘルパー。Web Crypto APIだけで完結し、外部ライブラリは不要。 ----
+function base64UrlEncodeBytes(bytes) {
+  let binary = '';
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-// pollingConfig.pollIntervalはprotobuf Duration形式の文字列（例: "5s"）で返る想定。
-// 想定外の形式でも壊れないよう、パースできなければ既定値にフォールバックする。
-function parsePollIntervalSeconds(value, fallbackSec) {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const m = value.match(/^([\d.]+)s$/);
-    if (m) return parseFloat(m[1]);
+function generateDropboxCodeVerifier() {
+  const bytes = new Uint8Array(64);
+  crypto.getRandomValues(bytes);
+  return base64UrlEncodeBytes(bytes);
+}
+
+async function computeDropboxCodeChallenge(verifier) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
+  return base64UrlEncodeBytes(new Uint8Array(digest));
+}
+
+// 認可コードのリダイレクト先はこのページ自身（クエリだけ除く）。Dropbox App Console側の
+// 「リダイレクトURI」設定と完全一致している必要がある。
+function getDropboxRedirectUri() {
+  return window.location.origin + window.location.pathname;
+}
+
+// ページ全体をDropboxの認可画面へ遷移させる（ポップアップではなくフルページ遷移。
+// PKCEのcode_verifierはこの遷移をまたいで必要になるので、戻りのページ読み込みまで
+// 生き残るsessionStorageに保存しておく）。
+async function dropboxLoginRedirect() {
+  const appKey = els.dropboxAppKey.value.trim();
+  if (!appKey) throw new Error('Dropbox アプリキーを入力してください');
+  localStorage.setItem(DROPBOX_APP_KEY_STORAGE_KEY, appKey);
+  const verifier = generateDropboxCodeVerifier();
+  sessionStorage.setItem(DROPBOX_CODE_VERIFIER_SESSION_KEY, verifier);
+  const challenge = await computeDropboxCodeChallenge(verifier);
+  const url = new URL('https://www.dropbox.com/oauth2/authorize');
+  url.searchParams.set('client_id', appKey);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('code_challenge', challenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  url.searchParams.set('token_access_type', 'offline'); // refresh_tokenも受け取る
+  url.searchParams.set('redirect_uri', getDropboxRedirectUri());
+  window.location.href = url.toString();
+}
+
+// 認可コード（?code=...）をアクセストークン+refresh_tokenに交換する。
+async function exchangeDropboxCodeForToken(code) {
+  const appKey = localStorage.getItem(DROPBOX_APP_KEY_STORAGE_KEY);
+  const verifier = sessionStorage.getItem(DROPBOX_CODE_VERIFIER_SESSION_KEY);
+  sessionStorage.removeItem(DROPBOX_CODE_VERIFIER_SESSION_KEY);
+  if (!appKey || !verifier) {
+    throw new Error('Dropbox認証の途中経過が見つかりません。お手数ですがもう一度ログインしてください');
   }
-  return fallbackSec;
-}
-
-async function googleLogin() {
-  const clientId = els.googleClientId.value.trim();
-  if (!clientId) throw new Error('Google OAuth クライアントIDを入力してください');
-  localStorage.setItem(GOOGLE_CLIENT_ID_STORAGE_KEY, clientId);
-  await waitForGis();
-  return new Promise((resolve, reject) => {
-    googleTokenClient = google.accounts.oauth2.initTokenClient({
-      client_id: clientId,
-      scope: GOOGLE_PHOTOS_SCOPE,
-      callback: (resp) => {
-        if (resp.error) { reject(new Error(`Googleログインに失敗しました: ${resp.error}`)); return; }
-        googleAccessToken = resp.access_token;
-        resolve(resp);
-      },
-    });
-    googleTokenClient.requestAccessToken();
-  });
-}
-
-async function createPickerSession() {
-  const res = await fetch('https://photospicker.googleapis.com/v1/sessions', {
+  const res = await fetch('https://api.dropbox.com/oauth2/token', {
     method: 'POST',
-    headers: { Authorization: `Bearer ${googleAccessToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({}),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      grant_type: 'authorization_code',
+      client_id: appKey,
+      code_verifier: verifier,
+      redirect_uri: getDropboxRedirectUri(),
+    }),
   });
-  if (!res.ok) throw new Error(`ピッカーセッションの作成に失敗しました（HTTP ${res.status}）`);
-  return res.json();
+  if (!res.ok) throw new Error(`Dropboxのトークン取得に失敗しました（HTTP ${res.status}）`);
+  const data = await res.json();
+  localStorage.setItem(DROPBOX_REFRESH_TOKEN_STORAGE_KEY, data.refresh_token);
+  dropboxAccessToken = data.access_token;
+  dropboxAccessTokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000; // 60秒の安全マージン
 }
 
-// mediaItemsSet が true になるまでポーリングする（ユーザーがピッカー画面で選び終えるまで）。
-async function pollPickerSessionUntilDone(sessionId, timeoutSec = 300) {
-  const deadline = performance.now() + timeoutSec * 1000;
-  for (;;) {
-    const res = await fetch(`https://photospicker.googleapis.com/v1/sessions/${sessionId}`, {
-      headers: { Authorization: `Bearer ${googleAccessToken}` },
-    });
-    if (!res.ok) throw new Error(`ピッカーセッションの確認に失敗しました（HTTP ${res.status}）`);
-    const session = await res.json();
-    if (session.mediaItemsSet) return session;
-    if (performance.now() > deadline) throw new Error('写真選択がタイムアウトしました。もう一度お試しください');
-    const waitSec = parsePollIntervalSeconds(session.pollingConfig?.pollInterval, 2);
-    await new Promise((resolve) => setTimeout(resolve, waitSec * 1000));
-  }
+// PKCEで取得したrefresh_tokenはclient_secret無しで使い続けられる（公開クライアント向けの
+// 設計）。アクセストークンは短命（数時間）なので、期限が近づくたびにこれで更新する。
+async function refreshDropboxAccessToken() {
+  const appKey = localStorage.getItem(DROPBOX_APP_KEY_STORAGE_KEY);
+  const refreshToken = localStorage.getItem(DROPBOX_REFRESH_TOKEN_STORAGE_KEY);
+  if (!appKey || !refreshToken) throw new Error('Dropboxにログインしていません');
+  const res = await fetch('https://api.dropbox.com/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ refresh_token: refreshToken, grant_type: 'refresh_token', client_id: appKey }),
+  });
+  if (!res.ok) throw new Error(`Dropboxのアクセストークン更新に失敗しました（HTTP ${res.status}）`);
+  const data = await res.json();
+  dropboxAccessToken = data.access_token;
+  dropboxAccessTokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000;
 }
 
-async function listPickerMediaItems(sessionId) {
+async function ensureDropboxAccessToken() {
+  if (dropboxAccessToken && Date.now() < dropboxAccessTokenExpiresAt) return;
+  await refreshDropboxAccessToken();
+}
+
+// アプリフォルダ（path: "" がそのルートを指す。アプリフォルダ権限のアプリはこのルートの
+// 外に出られない）配下の画像ファイルをサブフォルダも含めて一覧する。
+async function listDropboxAppFolderImages() {
+  await ensureDropboxAccessToken();
   const items = [];
-  let pageToken = '';
-  do {
-    const url = new URL('https://photospicker.googleapis.com/v1/mediaItems');
-    url.searchParams.set('sessionId', sessionId);
-    url.searchParams.set('pageSize', '100');
-    if (pageToken) url.searchParams.set('pageToken', pageToken);
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
-    if (!res.ok) throw new Error(`写真一覧の取得に失敗しました（HTTP ${res.status}）`);
-    const data = await res.json();
-    (data.mediaItems || []).forEach((item) => items.push(item));
-    pageToken = data.nextPageToken || '';
-  } while (pageToken);
+  const collect = (data) => {
+    (data.entries || []).forEach((entry) => {
+      if (entry['.tag'] === 'file' && DROPBOX_IMAGE_EXTENSIONS.test(entry.name)) {
+        items.push({ path: entry.path_lower, name: entry.name });
+      }
+    });
+  };
+
+  let res = await fetch('https://api.dropboxapi.com/2/files/list_folder', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${dropboxAccessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: '', recursive: true }),
+  });
+  if (!res.ok) throw new Error(`フォルダ一覧の取得に失敗しました（HTTP ${res.status}）`);
+  let data = await res.json();
+  collect(data);
+  while (data.has_more) {
+    res = await fetch('https://api.dropboxapi.com/2/files/list_folder/continue', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${dropboxAccessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cursor: data.cursor }),
+    });
+    if (!res.ok) throw new Error(`フォルダ一覧の取得（続き）に失敗しました（HTTP ${res.status}）`);
+    data = await res.json();
+    collect(data);
+  }
   return items;
 }
 
-// 使い終わったセッションの削除はベストエフォート（失敗してもスライドショー自体には影響しない）。
-function deletePickerSessionBestEffort(sessionId) {
-  fetch(`https://photospicker.googleapis.com/v1/sessions/${sessionId}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${googleAccessToken}` },
-  }).catch(() => {});
+// get_temporary_linkが返すURLはCORS対応で認証ヘッダ無しで直接フェッチできる
+// （files/downloadと違い、カスタムヘッダが必須にならない）。有効期限は4時間なので、
+// Google Photos版と同様に全件先読みはせず表示直前に都度取得する。
+async function fetchDropboxPhotoBlob(path) {
+  await ensureDropboxAccessToken();
+  const res = await fetch('https://api.dropboxapi.com/2/files/get_temporary_link', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${dropboxAccessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) throw new Error(`一時リンクの取得に失敗しました（HTTP ${res.status}）`);
+  const data = await res.json();
+  const imgRes = await fetch(data.link);
+  if (!imgRes.ok) throw new Error(`写真の取得に失敗しました（HTTP ${imgRes.status}）`);
+  return imgRes.blob();
 }
 
-// ピッカーで一度選んだ写真セットを、毎回選び直さずに済むようにする仕組み。
-// Picker APIのセッションは選択後も7日間有効で（作成時に返るexpireTime参照）、その間は
-// 同じsessionIdで mediaItems.list を呼び直すだけで（ピッカー画面を再度開かずに）選択済みの
-// 写真一覧と新しいbaseUrlを取得できる。セッションIDだけをlocalStorageに保存しておき
-// （写真データそのものではなく、7日間は再利用可能な識別子だけを保存）、次回訪問時に
-// 「Googleでログイン」した直後、自動でこの復元を試す。セッションが7日を過ぎて失効していれば
-// listPickerMediaItems() がエラーになるので、そのときだけ改めて「写真を選ぶ」を促す。
-const GOOGLE_PICKER_SESSION_STORAGE_KEY = 'nightlightvj_google_picker_session';
-
-function saveGooglePickerSessionId(sessionId) {
-  localStorage.setItem(GOOGLE_PICKER_SESSION_STORAGE_KEY, JSON.stringify({ sessionId }));
-}
-
-function clearSavedGooglePickerSession() {
-  localStorage.removeItem(GOOGLE_PICKER_SESSION_STORAGE_KEY);
-}
-
-// ログイン直後に自動で呼ぶ。保存済みセッションが無い/失効していれば何もせず戻る
-// （エラー扱いにはしない。単に「写真を選ぶ」を押すのを待つだけの通常状態）。
-async function tryRestoreSavedGooglePickerSession() {
-  let saved;
-  try {
-    saved = JSON.parse(localStorage.getItem(GOOGLE_PICKER_SESSION_STORAGE_KEY) || 'null');
-  } catch {
-    saved = null;
+async function loadDropboxFolder() {
+  setDropboxStatus('フォルダを読み込み中…');
+  const items = await listDropboxAppFolderImages();
+  if (items.length === 0) {
+    setDropboxStatus('アプリフォルダに写真がありません', 'error');
+    showToast('Dropboxのアプリフォルダに写真がありません。スマホ等のDropboxアプリでフォルダに写真を追加してください', 'error');
+    return;
   }
-  if (!saved?.sessionId) return false;
+  dropboxPhotoQueue = items;
+  dropboxPhotoIndex = -1;
+  showToast(`Dropboxから${items.length}枚読み込みました`, 'ok');
+  await advanceSlideshow(1);
+  restartSlideshowTimer();
+}
 
-  try {
-    setGoogleStatus('保存済みの選択を復元中…');
-    const items = await listPickerMediaItems(saved.sessionId);
-    if (items.length === 0) throw new Error('保存済みの選択に写真がありません');
-    googlePhotoQueue = items;
-    googlePhotoIndex = -1;
-    await advanceSlideshow(1);
-    restartSlideshowTimer();
-    showToast(`保存済みの選択から${items.length}枚を復元しました`, 'ok');
+// 認可画面からの戻り（?code=... または ?error=...）を検知して処理する。処理した場合はtrueを
+// 返す（呼び出し側はその場合、通常起動時の自動ログイン試行をスキップする）。
+async function handleDropboxRedirectIfPresent() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const error = params.get('error');
+  if (!code && !error) return false;
+  window.history.replaceState({}, document.title, getDropboxRedirectUri()); // codeをURL/履歴に残さない
+
+  if (error) {
+    setDropboxStatus(`Dropboxログインが拒否されました: ${params.get('error_description') || error}`, 'error');
     return true;
-  } catch (err) {
-    // 7日経過による失効、またはユーザーがGoogle側でアクセスを取り消した等。よくあることなので
-    // エラーtoastは出さず、ステータス行で「選び直してください」とだけ案内する。
-    console.warn('保存済みのGoogle Photosセッションを復元できませんでした（期限切れの可能性）:', err);
-    clearSavedGooglePickerSession();
-    setGoogleStatus('保存済みの選択が見つからない/期限切れです。「写真を選ぶ」で選択してください', 'pending');
-    return false;
   }
-}
-
-els.googleLoginBtn.addEventListener('click', async () => {
   try {
-    setGoogleStatus('ログイン中…');
-    await googleLogin();
-    els.googlePickBtn.disabled = false;
-    const restored = await tryRestoreSavedGooglePickerSession();
-    if (!restored) setGoogleStatus('ログイン済み。「写真を選ぶ」から選択してください', 'ok');
+    setDropboxStatus('ログイン処理中…');
+    await exchangeDropboxCodeForToken(code);
+    els.dropboxLoadBtn.disabled = false;
+    setDropboxStatus('ログイン済み', 'ok');
+    await loadDropboxFolder();
   } catch (err) {
     console.error(err);
-    setGoogleStatus(`エラー: ${err.message}`, 'error');
+    setDropboxStatus(`エラー: ${err.message}`, 'error');
+    showToast(err.message, 'error');
+  }
+  return true;
+}
+
+// 通常起動時（リダイレクト直後ではない場合）、保存済みのrefresh_tokenがあれば
+// クリックなしで自動的にログイン状態を復元してフォルダを読み込む。Dropboxのrefresh_tokenは
+// （Google Photosのセッションと違って）明示的に失効させない限り長期間有効なので、
+// 毎回ここで自動復元できる。
+async function tryAutoLoginDropboxOnBoot() {
+  const appKey = localStorage.getItem(DROPBOX_APP_KEY_STORAGE_KEY);
+  const refreshToken = localStorage.getItem(DROPBOX_REFRESH_TOKEN_STORAGE_KEY);
+  if (!appKey || !refreshToken) return;
+  try {
+    setDropboxStatus('ログイン確認中…');
+    await ensureDropboxAccessToken();
+    els.dropboxLoadBtn.disabled = false;
+    setDropboxStatus('ログイン済み', 'ok');
+    await loadDropboxFolder();
+  } catch (err) {
+    console.warn('Dropboxの自動ログインに失敗しました:', err);
+    setDropboxStatus('未ログイン');
+  }
+}
+
+els.dropboxLoginBtn.addEventListener('click', async () => {
+  try {
+    await dropboxLoginRedirect(); // 成功時はページ遷移するのでここから先は実行されない
+  } catch (err) {
+    console.error(err);
+    setDropboxStatus(`エラー: ${err.message}`, 'error');
     showToast(err.message, 'error');
   }
 });
 
-els.googlePickBtn.addEventListener('click', async () => {
+els.dropboxLoadBtn.addEventListener('click', async () => {
   try {
-    if (!googleAccessToken) {
-      setGoogleStatus('ログイン中…');
-      await googleLogin();
-    }
-    setGoogleStatus('ピッカーセッションを作成中…');
-    const session = await createPickerSession();
-    window.open(session.pickerUri, '_blank', 'noopener');
-    setGoogleStatus('Googleの画面で写真を選んでください…');
-    await pollPickerSessionUntilDone(session.id);
-    setGoogleStatus('選択結果を取得中…');
-    const items = await listPickerMediaItems(session.id);
-    if (items.length === 0) {
-      setGoogleStatus('写真が選択されませんでした', 'error');
-      showToast('写真が選択されませんでした', 'error');
-      return;
-    }
-    // セッションはここでは削除しない（7日間、選び直し無しで再利用するため。
-    // 詳しくは tryRestoreSavedGooglePickerSession() のコメント参照）。
-    saveGooglePickerSessionId(session.id);
-    googlePhotoQueue = items;
-    googlePhotoIndex = -1;
-    showToast(`Googleフォトから${items.length}枚読み込みました（この選択は7日間、次回ログイン時も自動で復元されます）`, 'ok');
-    await advanceSlideshow(1);
-    restartSlideshowTimer();
+    await loadDropboxFolder();
   } catch (err) {
     console.error(err);
-    setGoogleStatus(`エラー: ${err.message}`, 'error');
-    showToast(`Google連携エラー: ${err.message}`, 'error');
+    setDropboxStatus(`エラー: ${err.message}`, 'error');
+    showToast(`Dropbox連携エラー: ${err.message}`, 'error');
   }
 });
 
-els.googleClearBtn.addEventListener('click', () => {
-  let saved;
-  try {
-    saved = JSON.parse(localStorage.getItem(GOOGLE_PICKER_SESSION_STORAGE_KEY) || 'null');
-  } catch {
-    saved = null;
-  }
-  clearSavedGooglePickerSession();
-  if (saved?.sessionId && googleAccessToken) deletePickerSessionBestEffort(saved.sessionId);
-  googlePhotoQueue = [];
-  googlePhotoIndex = -1;
+els.dropboxClearBtn.addEventListener('click', () => {
+  localStorage.removeItem(DROPBOX_REFRESH_TOKEN_STORAGE_KEY);
+  dropboxAccessToken = null;
+  dropboxAccessTokenExpiresAt = 0;
+  dropboxPhotoQueue = [];
+  dropboxPhotoIndex = -1;
   stopSlideshowTimer();
-  setGoogleStatus(googleAccessToken ? 'ログイン済み。「写真を選ぶ」から選択してください' : '未ログイン', googleAccessToken ? 'ok' : 'pending');
-  showToast('Google Photosの選択をクリアしました', 'ok');
+  els.dropboxLoadBtn.disabled = true;
+  setDropboxStatus('未ログイン');
+  showToast('Dropboxからログアウトしました', 'ok');
 });
 
 // キューの写真を1枚読み込んで現在の背景に反映する（direction分だけインデックスを進める。
 // ±1のほか、初回表示用に advanceSlideshow(1) を index=-1 から呼ぶ想定）。
-// baseUrlは要Authorizationヘッダ＋幅高さ指定（有効期限60分）なので、全部先読みはせず
-// 表示する直前に都度フェッチする。
+// 一時リンクは4時間で失効するので、全部先読みはせず表示する直前に都度取得する。
 async function advanceSlideshow(direction) {
-  if (googlePhotoQueue.length === 0) return;
-  googlePhotoIndex = (googlePhotoIndex + direction + googlePhotoQueue.length) % googlePhotoQueue.length;
-  const item = googlePhotoQueue[googlePhotoIndex];
-  const posLabel = `${googlePhotoIndex + 1}/${googlePhotoQueue.length}`;
+  if (dropboxPhotoQueue.length === 0) return;
+  dropboxPhotoIndex = (dropboxPhotoIndex + direction + dropboxPhotoQueue.length) % dropboxPhotoQueue.length;
+  const item = dropboxPhotoQueue[dropboxPhotoIndex];
+  const posLabel = `${dropboxPhotoIndex + 1}/${dropboxPhotoQueue.length}`;
   try {
-    setGoogleStatus(`読み込み中… (${posLabel})`);
-    const meta = item.mediaFile?.mediaFileMetadata;
-    const srcW = meta?.width || GOOGLE_PHOTO_DOWNLOAD_MAX_DIM;
-    const srcH = meta?.height || GOOGLE_PHOTO_DOWNLOAD_MAX_DIM;
-    const scale = Math.min(1, GOOGLE_PHOTO_DOWNLOAD_MAX_DIM / Math.max(srcW, srcH));
-    const dlW = Math.max(1, Math.round(srcW * scale));
-    const dlH = Math.max(1, Math.round(srcH * scale));
-    const url = `${item.mediaFile.baseUrl}=w${dlW}-h${dlH}`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
-    if (res.status === 401) {
-      throw new Error('Googleの認証が切れました。「Googleでログイン」を押し直してください');
-    }
-    if (!res.ok) throw new Error(`写真の取得に失敗しました（HTTP ${res.status}）`);
-    const blob = await res.blob();
+    setDropboxStatus(`読み込み中… (${posLabel})`);
+    const blob = await fetchDropboxPhotoBlob(item.path);
     const objectUrl = URL.createObjectURL(blob);
     try {
       const img = new Image();
@@ -1187,12 +1207,12 @@ async function advanceSlideshow(direction) {
     els.viewportEmpty.hidden = true;
     setBackground(loadedImageEl, loadedImageW, loadedImageH);
     runExtraction({ silent: true });
-    setGoogleStatus(`${posLabel}: ${item.mediaFile.filename || ''}`, 'ok');
+    setDropboxStatus(`${posLabel}: ${item.name}`, 'ok');
   } catch (err) {
     console.error(err);
-    setGoogleStatus(`エラー: ${err.message}`, 'error');
+    setDropboxStatus(`エラー: ${err.message}`, 'error');
     showToast(`スライドショーエラー: ${err.message}`, 'error');
-    stopSlideshowTimer(); // 同じエラーで連打しないよう自動切り替えは止める（手動の次へ/前へは引き続き使える）
+    stopSlideshowTimer(); // 同じエラーで連打しないよう自動切り替えは止める（手動の前へ/次へは引き続き使える）
   }
 }
 
@@ -1205,7 +1225,7 @@ function stopSlideshowTimer() {
 
 function restartSlideshowTimer() {
   stopSlideshowTimer();
-  if (!slideshowAutoEnabled || googlePhotoQueue.length === 0) return;
+  if (!slideshowAutoEnabled || dropboxPhotoQueue.length === 0) return;
   slideshowTimerId = setInterval(() => { advanceSlideshow(1); }, slideshowIntervalSec * 1000);
 }
 
@@ -1252,8 +1272,8 @@ function onMIDIMessage(msg) {
         clusterNoteEnvelopes[i].start = performance.now() / 1000;
       }
     });
-    // role: scene_cut（SAMPLERトラック、要件定義書 §6）でGoogle Photosスライドショーを1枚進める。
-    if (slideshowMidiEnabled && googlePhotoQueue.length > 0) {
+    // role: scene_cut（SAMPLERトラック、要件定義書 §6）でDropboxスライドショーを1枚進める。
+    if (slideshowMidiEnabled && dropboxPhotoQueue.length > 0) {
       mapping.notes.forEach((n) => {
         if (n.role === 'scene_cut' && n.channel === ch && n.note === d1) {
           advanceSlideshow(1);
@@ -1413,7 +1433,7 @@ wireSlider(els.depthStrength, els.depthStrengthVal, (v) => {
 }, 0.6);
 wireSlider(els.dollyAmplitude, els.dollyAmplitudeVal, (v) => { dollyAmplitudeValue = v; }, 0.3);
 wireSlider(els.dollyPeriod, els.dollyPeriodVal, (v) => { dollyPeriodValue = v; }, 8);
-els.googleClientId.value = localStorage.getItem(GOOGLE_CLIENT_ID_STORAGE_KEY) || '';
+els.dropboxAppKey.value = localStorage.getItem(DROPBOX_APP_KEY_STORAGE_KEY) || '';
 els.slideshowAutoToggle.checked = slideshowAutoEnabled;
 els.slideshowAutoToggle.addEventListener('change', () => {
   slideshowAutoEnabled = els.slideshowAutoToggle.checked;
@@ -1426,6 +1446,11 @@ wireSlider(els.slideshowInterval, els.slideshowIntervalVal, (v) => {
 els.slideshowMidiToggle.checked = slideshowMidiEnabled;
 els.slideshowMidiToggle.addEventListener('change', () => {
   slideshowMidiEnabled = els.slideshowMidiToggle.checked;
+});
+// Dropboxの認可画面から戻ってきた直後ならそれを処理し、そうでなければ保存済みの
+// refresh_tokenでの自動ログインを試す（詳しくはDropbox連携ブロックのコメント参照）。
+handleDropboxRedirectIfPresent().then((handled) => {
+  if (!handled) tryAutoLoginDropboxOnBoot();
 });
 loadMapping();
 initMIDI();
