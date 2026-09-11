@@ -986,6 +986,25 @@ async function dropboxLoginRedirect() {
   window.location.href = url.toString();
 }
 
+// Dropbox APIのエラーレスポンスは必ず具体的な原因（error_summary、例:
+// "path/not_found/..." や "missing_scope/..." 等）をJSON本文に含むので、HTTPステータス
+// コードだけでなくその内容もメッセージに含める（原因の特定に必須）。
+async function buildDropboxErrorMessage(res, label) {
+  let detail = '';
+  try {
+    const text = await res.text();
+    try {
+      const json = JSON.parse(text);
+      detail = json.error_summary || json.error_description || text;
+    } catch {
+      detail = text;
+    }
+  } catch {
+    // 本文が読めなくてもステータスコードだけは伝える
+  }
+  return `${label}（HTTP ${res.status}）${detail ? `: ${detail}` : ''}`;
+}
+
 // 認可コード（?code=...）をアクセストークン+refresh_tokenに交換する。
 async function exchangeDropboxCodeForToken(code) {
   const appKey = localStorage.getItem(DROPBOX_APP_KEY_STORAGE_KEY);
@@ -1005,7 +1024,7 @@ async function exchangeDropboxCodeForToken(code) {
       redirect_uri: getDropboxRedirectUri(),
     }),
   });
-  if (!res.ok) throw new Error(`Dropboxのトークン取得に失敗しました（HTTP ${res.status}）`);
+  if (!res.ok) throw new Error(await buildDropboxErrorMessage(res, 'Dropboxのトークン取得に失敗しました'));
   const data = await res.json();
   localStorage.setItem(DROPBOX_REFRESH_TOKEN_STORAGE_KEY, data.refresh_token);
   dropboxAccessToken = data.access_token;
@@ -1023,7 +1042,7 @@ async function refreshDropboxAccessToken() {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ refresh_token: refreshToken, grant_type: 'refresh_token', client_id: appKey }),
   });
-  if (!res.ok) throw new Error(`Dropboxのアクセストークン更新に失敗しました（HTTP ${res.status}）`);
+  if (!res.ok) throw new Error(await buildDropboxErrorMessage(res, 'Dropboxのアクセストークン更新に失敗しました'));
   const data = await res.json();
   dropboxAccessToken = data.access_token;
   dropboxAccessTokenExpiresAt = Date.now() + (data.expires_in - 60) * 1000;
@@ -1052,7 +1071,7 @@ async function listDropboxAppFolderImages() {
     headers: { Authorization: `Bearer ${dropboxAccessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: '', recursive: true }),
   });
-  if (!res.ok) throw new Error(`フォルダ一覧の取得に失敗しました（HTTP ${res.status}）`);
+  if (!res.ok) throw new Error(await buildDropboxErrorMessage(res, 'フォルダ一覧の取得に失敗しました'));
   let data = await res.json();
   collect(data);
   while (data.has_more) {
@@ -1061,7 +1080,7 @@ async function listDropboxAppFolderImages() {
       headers: { Authorization: `Bearer ${dropboxAccessToken}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ cursor: data.cursor }),
     });
-    if (!res.ok) throw new Error(`フォルダ一覧の取得（続き）に失敗しました（HTTP ${res.status}）`);
+    if (!res.ok) throw new Error(await buildDropboxErrorMessage(res, 'フォルダ一覧の取得（続き）に失敗しました'));
     data = await res.json();
     collect(data);
   }
@@ -1078,7 +1097,7 @@ async function fetchDropboxPhotoBlob(path) {
     headers: { Authorization: `Bearer ${dropboxAccessToken}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ path }),
   });
-  if (!res.ok) throw new Error(`一時リンクの取得に失敗しました（HTTP ${res.status}）`);
+  if (!res.ok) throw new Error(await buildDropboxErrorMessage(res, '一時リンクの取得に失敗しました'));
   const data = await res.json();
   const imgRes = await fetch(data.link);
   if (!imgRes.ok) throw new Error(`写真の取得に失敗しました（HTTP ${imgRes.status}）`);
