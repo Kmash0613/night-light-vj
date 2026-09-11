@@ -628,6 +628,19 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
     if (cum >= targetCount) { threshold = v; break; }
   }
 
+  // 写真ごとのブラック/ホワイトポイント差を吸収するための正規化。
+  // 「そのbg画像の中でのthreshold(=このマップの黒点)〜実際に写っている最大輝度
+  // (=このマップの白点)」の範囲を毎回0-1に引き伸ばしてから重みにする。露出や
+  // 白飛びの度合いが写真ごとに違っても（例: あるコマではネオンが254まで飽和、
+  // 別のコマでは同じネオンが180止まりでもraw luma01を直接使うと後者だけ暗く
+  // 発光してしまう）、「そのコマの中で一番明るい点」を常にweight=1に揃えるので
+  // スライドショー中の発光の強さが写真間で均一になる。
+  let whitePoint = threshold;
+  for (let v = 255; v > threshold; v--) {
+    if (hist[v] > 0) { whitePoint = v; break; }
+  }
+  const dynamicRange = whitePoint - threshold; // 0 なら閾値以上が全部同じ輝度 = 伸ばす幅が無い
+
   // RGBAの生バッファに直接書き込む（<canvas>のImageData/putImageDataは経由しない）。
   // 詳しくは makeMaskTexture() 側のコメント参照: 2Dキャンバス経由だとpremultiplied
   // alphaでRGBが消えるリスクがあるが、Uint8Arrayを直接THREE.DataTextureに渡せば
@@ -643,15 +656,16 @@ function extractLuminanceMask(source, naturalW, naturalH, opts) {
       const i = y * w + x;
       if (luma[i] < threshold) continue;
       const luma01 = luma[i] / 255;
+      // dynamicRange=0（閾値以上が全部同じ輝度）の場合は伸ばしようが無いので
+      // 一律weight=1、それ以外は「そのコマの中でのthreshold(黒点)〜whitePoint(白点)」
+      // を0-1に正規化してから0.35-1へマップする（詳細は上のdynamicRangeの説明参照）。
+      const normalized = dynamicRange > 0 ? (luma[i] - threshold) / dynamicRange : 1;
       qualifyingPoints.push({
         i,
         x: x / Math.max(1, w - 1),
         y: normY,
         depth: pixelPseudoDepth(normY, luma01),
-        // 重みは画素自身の輝度（0-255を0-1に正規化）で決める。thresholdからの
-        // 距離ではないので、thresholdが255付近になっても0除算的に潰れない。
-        // 最低でも0.35は確保し、閾値ぎりぎりの画素も見えるようにする。
-        weight: Math.min(1, Math.max(0.35, luma01)),
+        weight: 0.35 + 0.65 * Math.min(1, Math.max(0, normalized)),
       });
     }
   }

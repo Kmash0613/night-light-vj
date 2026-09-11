@@ -96,7 +96,12 @@
       </div>
       <p class="hint" id="extract-status">検出: -</p>
       <p class="hint">
-        画素ごとに直接、輝度をそのまま重みにしてマップに書き込む（塊検出はしない）。
+        画素ごとに直接、輝度を重みにしてマップに書き込む（塊検出はしない）。重みは
+        「その写真の中でのthreshold（検出下限＝黒点）〜実際に写っている最大輝度
+        （白点）」を毎回0-1に正規化してから使うため、写真ごとに露出や白飛びの度合いが
+        違っても（同じネオンでもあるコマは255まで飽和、別のコマは180止まり、等）、
+        各写真の中で一番明るい点は常に同じ強さで発光する。スライドショーで写真が
+        切り替わっても発光のムラが出にくい。
         検出した画素は疑似深度（画面のY位置＋輝度）を主軸、画面上のXY座標を従軸にした
         k-meansで4クラスタ(0-3)に振り分ける（手前の群から順に0,1,2...になる。
         cluster0が最も手前＝config側のKICK=cluster0の慣習に合わせる）。各クラスタは
@@ -243,6 +248,6 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="main.js?v=30"></script>
+<script type="module" src="main.js?v=31"></script>
 </body>
 </html>
