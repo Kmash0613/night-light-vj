@@ -42,14 +42,14 @@
     </div>
 
     <div class="section">
-      <p class="panel-label">Google Photos（アルバム連動スライドショー）</p>
+      <p class="panel-label">Google Photos（スライドショー）</p>
       <div class="row">
         <label for="google-client-id">OAuth クライアントID</label>
         <input type="text" id="google-client-id" placeholder="xxxxxxxx.apps.googleusercontent.com">
       </div>
       <div class="row">
         <button id="google-login-btn">Googleでログイン</button>
-        <button id="google-pick-btn" disabled>アルバムから選ぶ</button>
+        <button id="google-pick-btn" disabled>写真を選ぶ</button>
       </div>
       <div class="status-line">
         <span class="status-dot pending" id="google-status-dot"></span>
@@ -72,11 +72,14 @@
         <button id="slideshow-next-btn">次へ ▶</button>
       </div>
       <p class="hint">
-        Googleフォトの「常時バックグラウンド監視」はAPIの制約上できないため、「アルバムから選ぶ」を
-        押すたびにGoogle純正のピッカー画面でアルバム/写真を選び直す方式（選んだ一覧はこのタブを
-        閉じるまでセッション内で使い回す）。クライアントIDの取得方法は
-        <code>runtime/README.md</code> の「Google Photos連携」を参照。写真データはブラウザから
-        Googleへ直接リクエストされ、どこか別のサーバーを経由することはない。
+        Googleフォトの「常時バックグラウンド監視」はAPIの制約上できないため、「写真を選ぶ」を
+        押すたびにGoogle純正のピッカー画面で選び直す方式（選んだ一覧はこのタブを閉じるまで
+        セッション内で使い回す）。<strong>ピッカー画面に「アルバムをまるごと選ぶ」ボタンは無い</strong>
+        （Google Photos Picker API自体の仕様）。特定のアルバムから選びたい場合は、ピッカー画面内の
+        検索バーにアルバム名を入力して絞り込み、出てきた写真をまとめて複数選択する（選択枚数に
+        上限は無い）。クライアントIDの取得方法は <code>runtime/README.md</code> の
+        「Google Photos連携」を参照。写真データはブラウザからGoogleへ直接リクエストされ、
+        どこか別のサーバーを経由することはない。
       </p>
     </div>
 
@@ -239,6 +242,6 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="main.js?v=25"></script>
+<script type="module" src="main.js?v=26"></script>
 </body>
 </html>
