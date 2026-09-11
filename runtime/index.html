@@ -146,12 +146,12 @@
     <div class="section">
       <p class="panel-label">Brightness</p>
       <div class="slider-row">
-        <span class="label-line"><span>bright gain（明滅の強さ）</span><span id="bright-gain-val">1.20</span></span>
-        <input type="range" id="bright-gain" min="0" max="3" step="0.01" value="1.2">
+        <span class="label-line"><span>bright gain（明滅の強さ）</span><span id="bright-gain-val">3.00</span></span>
+        <input type="range" id="bright-gain" min="0" max="3" step="0.01" value="3">
       </div>
       <div class="slider-row">
-        <span class="label-line"><span>base level（待機中の沈み）</span><span id="base-level-val">0.00</span></span>
-        <input type="range" id="base-level" min="-1" max="0" step="0.01" value="0">
+        <span class="label-line"><span>base level（待機中の沈み）</span><span id="base-level-val">-0.16</span></span>
+        <input type="range" id="base-level" min="-1" max="0" step="0.01" value="-0.16">
       </div>
       <p class="hint">
         輝度マップの値が乗っている場所だけ、対応するクラスタのMIDIノートに応じて
@@ -167,16 +167,16 @@
     <div class="section">
       <p class="panel-label">Bloom</p>
       <div class="slider-row">
-        <span class="label-line"><span>strength</span><span id="strength-val">1.60</span></span>
-        <input type="range" id="strength" min="0" max="3" step="0.01" value="1.6">
+        <span class="label-line"><span>strength</span><span id="strength-val">0.11</span></span>
+        <input type="range" id="strength" min="0" max="3" step="0.01" value="0.11">
       </div>
       <div class="slider-row">
-        <span class="label-line"><span>radius</span><span id="radius-val">0.45</span></span>
-        <input type="range" id="radius" min="0" max="1" step="0.01" value="0.45">
+        <span class="label-line"><span>radius</span><span id="radius-val">0.01</span></span>
+        <input type="range" id="radius" min="0" max="1" step="0.01" value="0.01">
       </div>
       <div class="slider-row">
-        <span class="label-line"><span>threshold</span><span id="threshold-val">0.55</span></span>
-        <input type="range" id="threshold" min="0" max="1" step="0.01" value="0.55">
+        <span class="label-line"><span>threshold</span><span id="threshold-val">0.00</span></span>
+        <input type="range" id="threshold" min="0" max="1" step="0.01" value="0">
       </div>
       <label class="checkbox">
         <input type="checkbox" id="cc-bloom-toggle" checked>
@@ -195,16 +195,16 @@
         疑似深度ディスプレイスメント＋カメラの呼吸移動を有効にする
       </label>
       <div class="slider-row">
-        <span class="label-line"><span>depth strength（ディスプレイスメントの強さ）</span><span id="depth-strength-val">0.60</span></span>
-        <input type="range" id="depth-strength" min="0" max="1.5" step="0.01" value="0.6">
+        <span class="label-line"><span>depth strength（ディスプレイスメントの強さ）</span><span id="depth-strength-val">0.04</span></span>
+        <input type="range" id="depth-strength" min="0" max="1.5" step="0.01" value="0.04">
       </div>
       <div class="slider-row">
         <span class="label-line"><span>dolly amplitude（カメラの振幅）</span><span id="dolly-amplitude-val">0.30</span></span>
         <input type="range" id="dolly-amplitude" min="0" max="1" step="0.01" value="0.3">
       </div>
       <div class="slider-row">
-        <span class="label-line"><span>dolly period（呼吸の周期・秒）</span><span id="dolly-period-val">8.00</span></span>
-        <input type="range" id="dolly-period" min="2" max="20" step="0.5" value="8">
+        <span class="label-line"><span>dolly period（呼吸の周期・秒）</span><span id="dolly-period-val">20.00</span></span>
+        <input type="range" id="dolly-period" min="2" max="20" step="0.5" value="20">
       </div>
       <p class="hint">
         本物の深度推定モデルはこの環境には無いため、画面のY位置（下ほど手前）と輝度
@@ -248,6 +248,6 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-<script type="module" src="main.js?v=31"></script>
+<script type="module" src="main.js?v=32"></script>
 </body>
 </html>

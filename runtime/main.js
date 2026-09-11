@@ -198,8 +198,8 @@ function updateMeters() {
 let renderer, camera, scene, bgMesh;
 let composer, bloomPass, monoPass;
 let currentAspect = 16 / 9;
-let brightGainUniformValue = 1.2;
-let baseLevelUniformValue = 0;
+let brightGainUniformValue = 3.0;
+let baseLevelUniformValue = -0.16;
 
 // Phase 2: 深度3D（実験的）。カメラは常にPerspectiveCameraだが、depth3dEnabled=false
 // （かつ depthStrengthValue=0 相当）なら疑似深度ディスプレイスメント・ドリー移動の
@@ -207,9 +207,9 @@ let baseLevelUniformValue = 0;
 // ようFOVを合わせてある。下のBASE_CAMERA_Z/FOV算出のコメント参照）。
 const BASE_CAMERA_Z = 5;
 let depth3dEnabled = true;
-let depthStrengthValue = 0.6; // 疑似深度をどれだけ頂点Zに反映するか（ワールド単位）
+let depthStrengthValue = 0.04; // 疑似深度をどれだけ頂点Zに反映するか（ワールド単位）
 let dollyAmplitudeValue = 0.3; // カメラZの呼吸振幅（ワールド単位）
-let dollyPeriodValue = 8; // 呼吸1周期の秒数（要件定義書のマクロ8小節に相当する仮の時間軸。MIDI Clock同期は未実装）
+let dollyPeriodValue = 20; // 呼吸1周期の秒数（要件定義書のマクロ8小節に相当する仮の時間軸。MIDI Clock同期は未実装）
 let bgWidthSegments = 1, bgHeightSegments = 1;
 let bgDepthValues = null; // Float32Array。頂点ごとの疑似深度(0=手前, 1=奥)。写真読み込み時のみ再計算する
 
@@ -260,7 +260,7 @@ function initRenderer() {
   camera = new THREE.PerspectiveCamera(fovDeg, OUTPUT_ASPECT, 0.1, 20);
   camera.position.z = BASE_CAMERA_Z;
 
-  bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 1.6, 0.45, 0.55);
+  bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.11, 0.01, 0.0);
   monoPass = new ShaderPass(monoShader);
 
   composer = new EffectComposer(renderer);
@@ -1452,14 +1452,14 @@ wireDisplayOnly(els.extractTopPercent, els.extractTopPercentVal, 1);
 wireSlider(els.brightGain, els.brightGainVal, (v) => {
   brightGainUniformValue = v;
   if (bgMesh) bgMesh.material.uniforms.brightGain.value = v;
-}, 1.2);
+}, 3.0);
 wireSlider(els.baseLevel, els.baseLevelVal, (v) => {
   baseLevelUniformValue = v;
   if (bgMesh) bgMesh.material.uniforms.baseLevel.value = v;
-}, 0);
-wireSlider(els.strength, els.strengthVal, (v) => { bloomPass.strength = v; }, 1.6);
-wireSlider(els.radius, els.radiusVal, (v) => { bloomPass.radius = v; }, 0.45);
-wireSlider(els.threshold, els.thresholdVal, (v) => { bloomPass.threshold = v; }, 0.55);
+}, -0.16);
+wireSlider(els.strength, els.strengthVal, (v) => { bloomPass.strength = v; }, 0.11);
+wireSlider(els.radius, els.radiusVal, (v) => { bloomPass.radius = v; }, 0.01);
+wireSlider(els.threshold, els.thresholdVal, (v) => { bloomPass.threshold = v; }, 0.0);
 wireSlider(els.monoAmount, els.monoAmountVal, (v) => { monoPass.uniforms.amount.value = v; }, 0);
 els.depth3dToggle.checked = depth3dEnabled;
 els.depth3dToggle.addEventListener('change', () => {
@@ -1469,9 +1469,9 @@ els.depth3dToggle.addEventListener('change', () => {
 wireSlider(els.depthStrength, els.depthStrengthVal, (v) => {
   depthStrengthValue = v;
   reapplyDepthStrength();
-}, 0.6);
+}, 0.04);
 wireSlider(els.dollyAmplitude, els.dollyAmplitudeVal, (v) => { dollyAmplitudeValue = v; }, 0.3);
-wireSlider(els.dollyPeriod, els.dollyPeriodVal, (v) => { dollyPeriodValue = v; }, 8);
+wireSlider(els.dollyPeriod, els.dollyPeriodVal, (v) => { dollyPeriodValue = v; }, 20);
 els.dropboxAppKey.value = localStorage.getItem(DROPBOX_APP_KEY_STORAGE_KEY) || '';
 els.slideshowAutoToggle.checked = slideshowAutoEnabled;
 els.slideshowAutoToggle.addEventListener('change', () => {
