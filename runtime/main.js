@@ -18,6 +18,12 @@
 // 疑似深度は generatePseudoDepthGrid() 単体に閉じているので、将来Depth Anything V2等の
 // 本物の深度マップ（batch/の出力やPNGの手動読み込み）に差し替える際もその関数の中身だけ
 // 変えればよい設計にしてある。
+//
+// Google Photos連携（実験的）: アルバムから選んだ写真群を次々自動表示するスライドショー。
+// Google Photos Picker API（Googleのピッカー画面でユーザーがその都度選び直す方式。バック
+// グラウンドでの新着自動監視はAPIの仕様上不可）とGoogle Identity Servicesでブラウザ内だけで
+// 完結させている。切り替えは一定時間ごとの自動タイマーと、role: scene_cut（SAMPLERトラック）
+// のMIDI Note Onの両方に対応（詳細は runtime/README.md「Google Photos連携」参照）。
 
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -37,6 +43,17 @@ const els = {
   photoInput: document.getElementById('photo-input'),
   pointsInput: document.getElementById('points-input'),
   sampleBtn: document.getElementById('sample-btn'),
+  googleClientId: document.getElementById('google-client-id'),
+  googleLoginBtn: document.getElementById('google-login-btn'),
+  googlePickBtn: document.getElementById('google-pick-btn'),
+  googleStatus: document.getElementById('google-status'),
+  googleStatusDot: document.getElementById('google-status-dot'),
+  slideshowAutoToggle: document.getElementById('slideshow-auto-toggle'),
+  slideshowInterval: document.getElementById('slideshow-interval'),
+  slideshowIntervalVal: document.getElementById('slideshow-interval-val'),
+  slideshowMidiToggle: document.getElementById('slideshow-midi-toggle'),
+  slideshowPrevBtn: document.getElementById('slideshow-prev-btn'),
+  slideshowNextBtn: document.getElementById('slideshow-next-btn'),
   select: document.getElementById('input-select'),
   refresh: document.getElementById('refresh-btn'),
   status: document.getElementById('status'),
@@ -881,6 +898,247 @@ els.sampleBtn.addEventListener('click', () => {
 });
 
 // ============================================================
+// Google Photos連携（アルバムからのスライドショー、実験的）
+//
+// Google Photos Library APIの写真一覧系スコープは2025年に廃止されたため、「バックグラウンドで
+// アルバムを監視して新着を自動取得」はAPIの仕様上できない。代わりに Google Photos Picker API
+// （https://photospicker.googleapis.com）を使う: 「アルバムから選ぶ」を押すたびにGoogle純正の
+// ピッカー画面（別タブ）が開き、ユーザーがそこでアルバム/写真を選び直す方式。選んだ一覧は
+// セッション内（このタブを閉じるまで）使い回せる。認証はGoogle Identity Services（GIS）の
+// トークンクライアントでブラウザ側だけで完結させ（サーバー不要、クライアントシークレット不要）、
+// 写真本体もブラウザから直接Googleにリクエストする（どこにもアップロード/経由しない）。
+// クライアントIDの取得手順は runtime/README.md 参照。
+// ============================================================
+
+const GOOGLE_PHOTOS_SCOPE = 'https://www.googleapis.com/auth/photospicker.mediaitems.readonly';
+const GOOGLE_CLIENT_ID_STORAGE_KEY = 'nightlightvj_google_client_id';
+const GOOGLE_PHOTO_DOWNLOAD_MAX_DIM = 2048; // baseUrlから取得する画像の最大辺（元画像が大きくてもここで頭打ち）
+
+let googleTokenClient = null;
+let googleAccessToken = null;
+let googlePhotoQueue = []; // Picker APIの mediaItems（{id, mediaFile:{baseUrl,filename,mediaFileMetadata:{width,height}}}）
+let googlePhotoIndex = -1;
+let slideshowTimerId = null;
+let slideshowIntervalSec = 12;
+let slideshowAutoEnabled = true;
+let slideshowMidiEnabled = true;
+
+function setGoogleStatus(text, kind) {
+  els.googleStatus.textContent = text;
+  els.googleStatus.className = `status-text ${kind || 'pending'}`;
+  els.googleStatusDot.className = `status-dot ${kind || 'pending'}`;
+}
+
+// index.htmlで<script src="https://accounts.google.com/gsi/client">を読み込んでいるが、
+// async defer なのでDOMContentLogin後もまだ未初期化な場合があるため、使う直前にポーリング待機する。
+function waitForGis(timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    if (window.google?.accounts?.oauth2) { resolve(); return; }
+    const start = performance.now();
+    const check = () => {
+      if (window.google?.accounts?.oauth2) { resolve(); return; }
+      if (performance.now() - start > timeoutMs) {
+        reject(new Error('Google Identity Servicesの読み込みに失敗しました（ネットワーク接続を確認してください）'));
+        return;
+      }
+      setTimeout(check, 100);
+    };
+    check();
+  });
+}
+
+// pollingConfig.pollIntervalはprotobuf Duration形式の文字列（例: "5s"）で返る想定。
+// 想定外の形式でも壊れないよう、パースできなければ既定値にフォールバックする。
+function parsePollIntervalSeconds(value, fallbackSec) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const m = value.match(/^([\d.]+)s$/);
+    if (m) return parseFloat(m[1]);
+  }
+  return fallbackSec;
+}
+
+async function googleLogin() {
+  const clientId = els.googleClientId.value.trim();
+  if (!clientId) throw new Error('Google OAuth クライアントIDを入力してください');
+  localStorage.setItem(GOOGLE_CLIENT_ID_STORAGE_KEY, clientId);
+  await waitForGis();
+  return new Promise((resolve, reject) => {
+    googleTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: clientId,
+      scope: GOOGLE_PHOTOS_SCOPE,
+      callback: (resp) => {
+        if (resp.error) { reject(new Error(`Googleログインに失敗しました: ${resp.error}`)); return; }
+        googleAccessToken = resp.access_token;
+        resolve(resp);
+      },
+    });
+    googleTokenClient.requestAccessToken();
+  });
+}
+
+async function createPickerSession() {
+  const res = await fetch('https://photospicker.googleapis.com/v1/sessions', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${googleAccessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) throw new Error(`ピッカーセッションの作成に失敗しました（HTTP ${res.status}）`);
+  return res.json();
+}
+
+// mediaItemsSet が true になるまでポーリングする（ユーザーがピッカー画面で選び終えるまで）。
+async function pollPickerSessionUntilDone(sessionId, timeoutSec = 300) {
+  const deadline = performance.now() + timeoutSec * 1000;
+  for (;;) {
+    const res = await fetch(`https://photospicker.googleapis.com/v1/sessions/${sessionId}`, {
+      headers: { Authorization: `Bearer ${googleAccessToken}` },
+    });
+    if (!res.ok) throw new Error(`ピッカーセッションの確認に失敗しました（HTTP ${res.status}）`);
+    const session = await res.json();
+    if (session.mediaItemsSet) return session;
+    if (performance.now() > deadline) throw new Error('写真選択がタイムアウトしました。もう一度お試しください');
+    const waitSec = parsePollIntervalSeconds(session.pollingConfig?.pollInterval, 2);
+    await new Promise((resolve) => setTimeout(resolve, waitSec * 1000));
+  }
+}
+
+async function listPickerMediaItems(sessionId) {
+  const items = [];
+  let pageToken = '';
+  do {
+    const url = new URL('https://photospicker.googleapis.com/v1/mediaItems');
+    url.searchParams.set('sessionId', sessionId);
+    url.searchParams.set('pageSize', '100');
+    if (pageToken) url.searchParams.set('pageToken', pageToken);
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
+    if (!res.ok) throw new Error(`写真一覧の取得に失敗しました（HTTP ${res.status}）`);
+    const data = await res.json();
+    (data.mediaItems || []).forEach((item) => items.push(item));
+    pageToken = data.nextPageToken || '';
+  } while (pageToken);
+  return items;
+}
+
+// 使い終わったセッションの削除はベストエフォート（失敗してもスライドショー自体には影響しない）。
+function deletePickerSessionBestEffort(sessionId) {
+  fetch(`https://photospicker.googleapis.com/v1/sessions/${sessionId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${googleAccessToken}` },
+  }).catch(() => {});
+}
+
+els.googleLoginBtn.addEventListener('click', async () => {
+  try {
+    setGoogleStatus('ログイン中…');
+    await googleLogin();
+    setGoogleStatus('ログイン済み', 'ok');
+    els.googlePickBtn.disabled = false;
+  } catch (err) {
+    console.error(err);
+    setGoogleStatus(`エラー: ${err.message}`, 'error');
+    showToast(err.message, 'error');
+  }
+});
+
+els.googlePickBtn.addEventListener('click', async () => {
+  try {
+    if (!googleAccessToken) {
+      setGoogleStatus('ログイン中…');
+      await googleLogin();
+    }
+    setGoogleStatus('ピッカーセッションを作成中…');
+    const session = await createPickerSession();
+    window.open(session.pickerUri, '_blank', 'noopener');
+    setGoogleStatus('Googleの画面で写真/アルバムを選んでください…');
+    await pollPickerSessionUntilDone(session.id);
+    setGoogleStatus('選択結果を取得中…');
+    const items = await listPickerMediaItems(session.id);
+    deletePickerSessionBestEffort(session.id);
+    if (items.length === 0) {
+      setGoogleStatus('写真が選択されませんでした', 'error');
+      showToast('写真が選択されませんでした', 'error');
+      return;
+    }
+    googlePhotoQueue = items;
+    googlePhotoIndex = -1;
+    showToast(`Googleフォトから${items.length}枚読み込みました`, 'ok');
+    await advanceSlideshow(1);
+    restartSlideshowTimer();
+  } catch (err) {
+    console.error(err);
+    setGoogleStatus(`エラー: ${err.message}`, 'error');
+    showToast(`Google連携エラー: ${err.message}`, 'error');
+  }
+});
+
+// キューの写真を1枚読み込んで現在の背景に反映する（direction分だけインデックスを進める。
+// ±1のほか、初回表示用に advanceSlideshow(1) を index=-1 から呼ぶ想定）。
+// baseUrlは要Authorizationヘッダ＋幅高さ指定（有効期限60分）なので、全部先読みはせず
+// 表示する直前に都度フェッチする。
+async function advanceSlideshow(direction) {
+  if (googlePhotoQueue.length === 0) return;
+  googlePhotoIndex = (googlePhotoIndex + direction + googlePhotoQueue.length) % googlePhotoQueue.length;
+  const item = googlePhotoQueue[googlePhotoIndex];
+  const posLabel = `${googlePhotoIndex + 1}/${googlePhotoQueue.length}`;
+  try {
+    setGoogleStatus(`読み込み中… (${posLabel})`);
+    const meta = item.mediaFile?.mediaFileMetadata;
+    const srcW = meta?.width || GOOGLE_PHOTO_DOWNLOAD_MAX_DIM;
+    const srcH = meta?.height || GOOGLE_PHOTO_DOWNLOAD_MAX_DIM;
+    const scale = Math.min(1, GOOGLE_PHOTO_DOWNLOAD_MAX_DIM / Math.max(srcW, srcH));
+    const dlW = Math.max(1, Math.round(srcW * scale));
+    const dlH = Math.max(1, Math.round(srcH * scale));
+    const url = `${item.mediaFile.baseUrl}=w${dlW}-h${dlH}`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
+    if (res.status === 401) {
+      throw new Error('Googleの認証が切れました。「Googleでログイン」を押し直してください');
+    }
+    if (!res.ok) throw new Error(`写真の取得に失敗しました（HTTP ${res.status}）`);
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      const img = new Image();
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error('画像のデコードに失敗しました'));
+        img.src = objectUrl;
+      });
+      loadedImageW = img.naturalWidth;
+      loadedImageH = img.naturalHeight;
+      loadedImageEl = toNormalizedCanvas(img);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+    els.viewportEmpty.hidden = true;
+    setBackground(loadedImageEl, loadedImageW, loadedImageH);
+    runExtraction({ silent: true });
+    setGoogleStatus(`${posLabel}: ${item.mediaFile.filename || ''}`, 'ok');
+  } catch (err) {
+    console.error(err);
+    setGoogleStatus(`エラー: ${err.message}`, 'error');
+    showToast(`スライドショーエラー: ${err.message}`, 'error');
+    stopSlideshowTimer(); // 同じエラーで連打しないよう自動切り替えは止める（手動の次へ/前へは引き続き使える）
+  }
+}
+
+function stopSlideshowTimer() {
+  if (slideshowTimerId) {
+    clearInterval(slideshowTimerId);
+    slideshowTimerId = null;
+  }
+}
+
+function restartSlideshowTimer() {
+  stopSlideshowTimer();
+  if (!slideshowAutoEnabled || googlePhotoQueue.length === 0) return;
+  slideshowTimerId = setInterval(() => { advanceSlideshow(1); }, slideshowIntervalSec * 1000);
+}
+
+els.slideshowPrevBtn.addEventListener('click', () => advanceSlideshow(-1));
+els.slideshowNextBtn.addEventListener('click', () => advanceSlideshow(1));
+
+// ============================================================
 // MIDI
 // ============================================================
 
@@ -920,6 +1178,14 @@ function onMIDIMessage(msg) {
         clusterNoteEnvelopes[i].start = performance.now() / 1000;
       }
     });
+    // role: scene_cut（SAMPLERトラック、要件定義書 §6）でGoogle Photosスライドショーを1枚進める。
+    if (slideshowMidiEnabled && googlePhotoQueue.length > 0) {
+      mapping.notes.forEach((n) => {
+        if (n.role === 'scene_cut' && n.channel === ch && n.note === d1) {
+          advanceSlideshow(1);
+        }
+      });
+    }
   } else if (type === 0xb0) {
     mapping.control_changes.forEach((cc) => {
       if (cc.channel === ch && cc.cc_number === d1 && cc.target === 'bloom_amount' && els.ccBloomToggle.checked) {
@@ -1073,6 +1339,20 @@ wireSlider(els.depthStrength, els.depthStrengthVal, (v) => {
 }, 0.6);
 wireSlider(els.dollyAmplitude, els.dollyAmplitudeVal, (v) => { dollyAmplitudeValue = v; }, 0.3);
 wireSlider(els.dollyPeriod, els.dollyPeriodVal, (v) => { dollyPeriodValue = v; }, 8);
+els.googleClientId.value = localStorage.getItem(GOOGLE_CLIENT_ID_STORAGE_KEY) || '';
+els.slideshowAutoToggle.checked = slideshowAutoEnabled;
+els.slideshowAutoToggle.addEventListener('change', () => {
+  slideshowAutoEnabled = els.slideshowAutoToggle.checked;
+  restartSlideshowTimer();
+});
+wireSlider(els.slideshowInterval, els.slideshowIntervalVal, (v) => {
+  slideshowIntervalSec = v;
+  restartSlideshowTimer();
+}, 12);
+els.slideshowMidiToggle.checked = slideshowMidiEnabled;
+els.slideshowMidiToggle.addEventListener('change', () => {
+  slideshowMidiEnabled = els.slideshowMidiToggle.checked;
+});
 loadMapping();
 initMIDI();
 tick();

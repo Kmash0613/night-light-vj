@@ -154,8 +154,71 @@ bloomの輝度判定はその手前でカラーのまま行われるので、光
 - 写真・光点データは `<input type="file">` でローカル読み込みし、どこにも送信しない
 
 未実装（Phase 2以降）: 本物の深度マップの読み込み、MIDI Clockへのドリー位相同期、
-DOF、カラーグレーディング、`camera_kick` / `hue_shift` / `bloom_spike` / `scene_cut`
-ロールの反映。
+DOF、カラーグレーディング、`camera_kick` / `hue_shift` / `bloom_spike` ロールの反映
+（`scene_cut` はGoogle Photosスライドショーの切り替えトリガーとして実装済み。下記参照）。
+
+## Google Photos連携（アルバム連動スライドショー、実験的）
+
+写真を1枚ずつ手動で読み込む代わりに、Googleフォトのアルバムから選んだ写真群を
+次々と自動表示できる（「Google Photos」パネル）。
+
+### 前提・できないこと
+
+Google Photos Library APIの写真一覧・検索系スコープは2025年に廃止されたため、
+「バックグラウンドでアルバムを常時監視して新着を自動取得する」ことはAPIの仕様上できない。
+代わりに [Google Photos Picker API](https://developers.google.com/photos/picker) を使う:
+「アルバムから選ぶ」ボタンを押すたびにGoogle純正のピッカー画面（別タブ）が開き、
+ユーザーがそこでアルバム/写真を選び直す方式になる。選んだ一覧はセッション内
+（このタブを閉じるまで）使い回せる。認証は
+[Google Identity Services](https://developers.google.com/identity/oauth2/web/guides/overview)
+のトークンクライアントでブラウザ側だけで完結させており（サーバー・クライアントシークレット
+不要）、写真本体もブラウザから直接Googleへリクエストする（どこか別のサーバーを経由しない）。
+
+### OAuth クライアントIDの取得手順（初回のみ、ユーザー側の作業）
+
+このアプリ用のOAuthクライアントIDは開発側では発行できない。以下の手順で各自
+Google Cloud Consoleで作成し、「Google Photos」パネルの「OAuth クライアントID」欄に貼り付ける
+（ブラウザの `localStorage` に保存されるので次回以降は再入力不要）。
+
+1. [Google Cloud Console](https://console.cloud.google.com/) にアクセスし、新規プロジェクトを
+   作成する（または既存プロジェクトを選択）。
+2. 左メニュー「APIとサービス」→「ライブラリ」で **Google Photos Picker API** を検索して有効化する。
+3. 「APIとサービス」→「OAuth同意画面」で、User Type: 「外部」を選択してアプリ名・
+   サポートメールなどを入力し保存する。「テストユーザー」に自分のGoogleアカウントを
+   追加すれば、Googleの審査を受けずにそのアカウントで使い始められる
+   （`photospicker.mediaitems.readonly` は機密スコープではない）。
+4. 「APIとサービス」→「認証情報」→「+ 認証情報を作成」→「OAuth クライアント ID」を選び、
+   アプリケーションの種類は **「ウェブ アプリケーション」** を選択する。
+   - 「承認済みの JavaScript 生成元」に `https://<owner>.github.io`（実際に開くGitHub Pagesの
+     オリジン）を追加する。ローカルで `python -m http.server` を使って試す場合は
+     `http://localhost:8000` 等も追加しておくと便利。
+   - リダイレクトURIの設定は不要（トークンクライアントはポップアップ内で完結する）。
+5. 作成されたクライアントID（`xxxxxxxx.apps.googleusercontent.com` の形式）をコピーし、
+   ランタイムの「Google Photos」パネルに貼り付ける。
+
+### 使い方・切り替えタイミング
+
+1. クライアントIDを貼り付けて「Googleでログイン」→ブラウザの標準的なGoogleログイン
+   ポップアップで許可する。
+2. 「アルバムから選ぶ」を押すと別タブでGoogle純正のピッカーが開くので、アルバムまたは
+   個別の写真を選んで完了する。選択が終わると自動的にこのタブ側が検知し、1枚目を表示する。
+3. 切り替えタイミングは2通りを両方使える:
+   - **一定時間ごとの自動切り替え**（トグル＋秒数スライダー、既定12秒）
+   - **MIDIトリガー**: `config/midi-mapping.json` の `role: "scene_cut"`（実測データでは
+     SAMPLERトラック）のNote Onで1枚進める。要件定義書 §6 の「SAMPLERトラック＝シーン切り替え
+     トリガー」に対応
+   - 「◀ 前へ」「次へ ▶」ボタンで手動操作もできる（MIDI/実機が無い環境での確認用）
+
+### 実装上の注意
+
+- `mediaFile.baseUrl` は取得から60分で失効し、必ず `Authorization: Bearer <token>` ヘッダーと
+  幅・高さの指定（`=w{width}-h{height}`）を付けてリクエストする必要があるため、全件を
+  先読みはせず、表示する直前に毎回フェッチする（`advanceSlideshow()` in `main.js`）
+- OAuthアクセストークンも短命（目安1時間）。切れると写真取得が401で失敗するので、
+  エラーメッセージで「Googleでログイン」を押し直すよう案内し、自動切り替えタイマーは
+  いったん止める（無限にエラーを繰り返さないため。手動の前へ/次へは引き続き使える）
+- ピッカーセッションは一覧取得後にベストエフォートで削除する（失敗してもスライドショー
+  自体には影響しない）
 
 ## 今後の着手順序
 
