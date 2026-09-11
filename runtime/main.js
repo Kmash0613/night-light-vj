@@ -376,7 +376,11 @@ function makeEmptyMaskTexture() {
   return makeMaskTexture(new Uint8Array(4), 1, 1); // 1x1・全チャンネル0＝どこにも重みが無い
 }
 
-function setBackground(source, width, height) {
+// precomputedDepthGrid: スライドショーの先読み（prepareDropboxPhoto）で既に
+// generatePseudoDepthGrid() 済みの場合はそれをそのまま渡す（widthSegments/heightSegments
+// は同じ aspect=width/height から computeDepthGridSegments() で決まるので必ず一致する）。
+// 省略時（通常の写真読み込み）は従来通りここで regeneratePseudoDepth() が計算する。
+function setBackground(source, width, height, precomputedDepthGrid) {
   if (bgMesh) {
     scene.remove(bgMesh);
     bgMesh.geometry.dispose();
@@ -409,7 +413,12 @@ function setBackground(source, width, height) {
   bgMesh.position.z = 0;
   scene.add(bgMesh);
   resize();
-  regeneratePseudoDepth(source);
+  if (precomputedDepthGrid) {
+    bgDepthValues = precomputedDepthGrid;
+    reapplyDepthStrength();
+  } else {
+    regeneratePseudoDepth(source);
+  }
 }
 
 function applyMaskData(data, w, h) {
@@ -807,13 +816,21 @@ function runExtraction({ silent = false } = {}) {
     setExtractStatus(`検出: エラー (${err.message})`, 'error');
     return;
   }
+  const ms = Math.round(performance.now() - t0);
+  applyExtractionResult(result, ms);
+  if (!silent) showToast(`輝度マップを再生成: 画像の${result.coveragePercent.toFixed(1)}% (${ms}ms)`, 'ok');
+}
+
+// extractLuminanceMask()の結果を実際にbgMeshへ反映する部分だけを切り出したもの。
+// スライドショーの先読み（prepareDropboxPhoto）は裏でextractLuminanceMask()自体は
+// 先に計算しておけるが、bgMeshへの書き込みは表示に切り替わる瞬間まで遅らせる必要が
+// あるため、計算（runExtraction）と反映（この関数）を分けている。
+function applyExtractionResult(result, ms) {
   const { maskData, maskW, maskH, coveragePercent, threshold } = result;
   applyMaskData(maskData, maskW, maskH);
   lastMaskInfo = { coveragePercent, threshold };
-  const ms = Math.round(performance.now() - t0);
-
-  setExtractStatus(`検出: 画像の${coveragePercent.toFixed(1)}% (輝度閾値 ${threshold} / ${ms}ms)`, coveragePercent === 0 ? 'error' : null);
-  if (!silent) showToast(`輝度マップを再生成: 画像の${coveragePercent.toFixed(1)}% (${ms}ms)`, 'ok');
+  const msLabel = ms != null ? ` / ${ms}ms` : '';
+  setExtractStatus(`検出: 画像の${coveragePercent.toFixed(1)}% (輝度閾値 ${threshold}${msLabel})`, coveragePercent === 0 ? 'error' : null);
 }
 
 // スマホ写真などEXIFの回転情報を持つJPEGは、<img>のnaturalWidth/naturalHeightは
@@ -949,6 +966,13 @@ let slideshowTimerId = null;
 let slideshowIntervalSec = 12;
 let slideshowAutoEnabled = true;
 let slideshowMidiEnabled = true;
+// 切り替わりの瞬間に一時リンク取得〜画像ダウンロード〜デコード〜輝度マップ抽出が
+// その場で走ると数百ms〜数秒止まって見えるため、表示中の写真の「次」を裏で先読み・
+// 先処理しておく（{ index, path, promise, data, error }）。実際にその写真へ進むときは
+// 先読みが済んでいればそれをそのまま使うので体感の停止が無くなる。当たらなかった場合
+// （逆再生、先読みがまだ間に合っていない等）は従来通りその場で処理するのでフォールバック
+// として壊れない。詳細は prepareDropboxPhoto()/scheduleSlideshowPrefetch() 参照。
+let slideshowPrefetch = null;
 
 function setDropboxStatus(text, kind) {
   els.dropboxStatus.textContent = text;
@@ -1212,15 +1236,73 @@ els.dropboxClearBtn.addEventListener('click', () => {
   dropboxAccessTokenExpiresAt = 0;
   dropboxPhotoQueue = [];
   dropboxPhotoIndex = -1;
+  slideshowPrefetch = null;
   stopSlideshowTimer();
   els.dropboxLoadBtn.disabled = true;
   setDropboxStatus('未ログイン');
   showToast('Dropboxからログアウトしました', 'ok');
 });
 
+// Dropboxの1枚を「表示に反映する直前まで」処理する: 一時リンク取得→画像ダウンロード→
+// デコード→正規化canvas化→疑似深度サンプリング→輝度マップ抽出。ここではbgMesh等の
+// グローバルな表示状態には一切触れない（＝現在表示中の写真に影響を与えずに裏で
+// 走らせられる）ので、先読み（scheduleSlideshowPrefetch）と通常の都度取得
+// （advanceSlideshowがキャッシュを外した場合のフォールバック）の両方から共通で使う。
+// 一時リンクは4時間で失効するが、先読みするのは常にたかだか1枚先だけなので問題にならない。
+async function prepareDropboxPhoto(item) {
+  const blob = await fetchDropboxPhotoBlob(item.path);
+  const objectUrl = URL.createObjectURL(blob);
+  let img;
+  try {
+    img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = () => reject(new Error('画像のデコードに失敗しました'));
+      img.src = objectUrl;
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+  const canvas = toNormalizedCanvas(img);
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  const { widthSegments, heightSegments } = computeDepthGridSegments(w / h);
+  const depthGrid = generatePseudoDepthGrid(canvas, widthSegments, heightSegments);
+  const maskResult = extractLuminanceMask(canvas, w, h, currentExtractOptions());
+  return { canvas, w, h, depthGrid, maskResult };
+}
+
+// prepareDropboxPhoto()の結果をここで初めて実際の表示（bgMesh）に反映する。
+function applyPreparedDropboxPhoto(prepared) {
+  loadedImageW = prepared.w;
+  loadedImageH = prepared.h;
+  loadedImageEl = prepared.canvas;
+  els.viewportEmpty.hidden = true;
+  setBackground(prepared.canvas, prepared.w, prepared.h, prepared.depthGrid);
+  applyExtractionResult(prepared.maskResult);
+}
+
+// 表示中の写真が決まった直後に呼ぶ。「次に進むはずの1枚」だけを裏で先読み・先処理して
+// おく（先の先まで読むと一時リンクの発行数が無駄に増える上、体感の改善にも寄与しない
+// ため1枚だけに留める）。写真が1枚以下なら先読みしても意味が無いので何もしない。
+function scheduleSlideshowPrefetch() {
+  if (dropboxPhotoQueue.length < 2) { slideshowPrefetch = null; return; }
+  const nextIndex = (dropboxPhotoIndex + 1) % dropboxPhotoQueue.length;
+  const item = dropboxPhotoQueue[nextIndex];
+  if (slideshowPrefetch && slideshowPrefetch.index === nextIndex && slideshowPrefetch.path === item.path) return; // 既に先読み中/済み
+  const entry = { index: nextIndex, path: item.path, data: null, error: null, promise: null };
+  entry.promise = prepareDropboxPhoto(item)
+    .then((data) => { entry.data = data; })
+    .catch((err) => { entry.error = err; }); // ここでは投げない。実際にその写真へ進むときにadvanceSlideshow側で拾って通常のエラー処理に回す
+  slideshowPrefetch = entry;
+}
+
 // キューの写真を1枚読み込んで現在の背景に反映する（direction分だけインデックスを進める。
 // ±1のほか、初回表示用に advanceSlideshow(1) を index=-1 から呼ぶ想定）。
-// 一時リンクは4時間で失効するので、全部先読みはせず表示する直前に都度取得する。
+// 進める先が直前にscheduleSlideshowPrefetch()で先読みしておいた1枚と一致すれば、
+// その結果をそのまま使うのでネットワーク取得やデコードの待ちが発生しない（＝切り替え時に
+// 止まって見える問題の対策）。一致しない場合（逆再生、先読みがまだ間に合っていない等）は
+// 従来通りその場でprepareDropboxPhoto()を呼ぶので、先読みが外れても壊れない。
 async function advanceSlideshow(direction) {
   if (dropboxPhotoQueue.length === 0) return;
   dropboxPhotoIndex = (dropboxPhotoIndex + direction + dropboxPhotoQueue.length) % dropboxPhotoQueue.length;
@@ -1228,25 +1310,20 @@ async function advanceSlideshow(direction) {
   const posLabel = `${dropboxPhotoIndex + 1}/${dropboxPhotoQueue.length}`;
   try {
     setDropboxStatus(`読み込み中… (${posLabel})`);
-    const blob = await fetchDropboxPhotoBlob(item.path);
-    const objectUrl = URL.createObjectURL(blob);
-    try {
-      const img = new Image();
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = () => reject(new Error('画像のデコードに失敗しました'));
-        img.src = objectUrl;
-      });
-      loadedImageW = img.naturalWidth;
-      loadedImageH = img.naturalHeight;
-      loadedImageEl = toNormalizedCanvas(img);
-    } finally {
-      URL.revokeObjectURL(objectUrl);
+    let prepared;
+    if (slideshowPrefetch && slideshowPrefetch.index === dropboxPhotoIndex && slideshowPrefetch.path === item.path) {
+      const entry = slideshowPrefetch;
+      slideshowPrefetch = null;
+      await entry.promise;
+      if (entry.error) throw entry.error;
+      prepared = entry.data;
+    } else {
+      slideshowPrefetch = null;
+      prepared = await prepareDropboxPhoto(item);
     }
-    els.viewportEmpty.hidden = true;
-    setBackground(loadedImageEl, loadedImageW, loadedImageH);
-    runExtraction({ silent: true });
+    applyPreparedDropboxPhoto(prepared);
     setDropboxStatus(`${posLabel}: ${item.name}`, 'ok');
+    scheduleSlideshowPrefetch(); // 次の「次」をまた裏で仕込んでおく
   } catch (err) {
     console.error(err);
     setDropboxStatus(`エラー: ${err.message}`, 'error');
@@ -1449,6 +1526,13 @@ function tick() {
 
 initRenderer();
 wireDisplayOnly(els.extractTopPercent, els.extractTopPercentVal, 1);
+// top %を動かした後は、既に先読み済みの次の1枚（＝古いtop %で計算済み）を捨てて
+// 新しい値で先読みし直す（scheduleSlideshowPrefetchは関数宣言なので巻き上げにより
+// ここより下の定義を先に呼んでも問題ない）。
+els.extractTopPercent.addEventListener('input', () => {
+  slideshowPrefetch = null;
+  scheduleSlideshowPrefetch();
+});
 wireSlider(els.brightGain, els.brightGainVal, (v) => {
   brightGainUniformValue = v;
   if (bgMesh) bgMesh.material.uniforms.brightGain.value = v;
