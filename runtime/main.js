@@ -1002,7 +1002,13 @@ async function buildDropboxErrorMessage(res, label) {
   } catch {
     // 本文が読めなくてもステータスコードだけは伝える
   }
-  return `${label}（HTTP ${res.status}）${detail ? `: ${detail}` : ''}`;
+  // missing_scope（Dropbox App ConsoleのPermissionsタブで権限を有効にしたが未Submit、
+  // または有効化前に発行された既存トークンのまま）はユーザー側で直せるので、
+  // 何をすればよいかその場で分かるよう案内を付け足す。
+  const hint = /missing_scope/.test(detail)
+    ? ' → App ConsoleのPermissionsタブで該当スコープを有効にしてSubmitし、いったんログアウトしてから再ログインしてください（既存トークンには新しい権限が含まれないため）'
+    : '';
+  return `${label}（HTTP ${res.status}）${detail ? `: ${detail}` : ''}${hint}`;
 }
 
 // 認可コード（?code=...）をアクセストークン+refresh_tokenに交換する。
